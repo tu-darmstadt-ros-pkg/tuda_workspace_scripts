@@ -1,0 +1,6 @@
+*~
+*.autosave
+*.orig
+*.rej
+.idea/
+.vscode/

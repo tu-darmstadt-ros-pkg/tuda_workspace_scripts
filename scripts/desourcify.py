@@ -1,0 +1,222 @@
+#!/usr/bin/env python
+# PYTHON_ARGCOMPLETE_OK
+# This script checks all repositories located in the workspace folder and for each package
+# resolves the binary using rosdep, the binary info is checked for the homepage. If the
+# homepage follows the scheme ${GIT_REPO}#${BRANCH}, it is checked whether the repo is on the same
+# branch and does not diverge from the remote in any way. If this is true for all packages in
+# the repository, the repo can be replaced by the binaries.
+from __future__ import print_function
+from builtins import input
+try:
+  import apt
+except ImportError:
+  print("python-apt is required! Install using 'sudo apt install python-apt'")
+  exit(1)
+try:
+  import git
+except ImportError:
+  print("GitPython is required! Install using 'pip install --user gitpython'")
+  exit(1)
+import os
+import re
+import rospkg
+from shutil import rmtree
+import subprocess
+import sys
+
+class Style:
+  Error='\033[0;31m'
+  Warning='\033[0;33m'
+  Info='\033[0;34m'
+  Success='\033[0;32m'
+  Reset='\033[0;39m'
+
+def printWithStyle(style, msg):
+  print(style + msg + Style.Reset)
+
+class RepoState:
+  def __init__(self):
+    self.clean = True
+    self.pkgs = []
+    self.binaries = {}
+
+def multiselect(options, selection_text="Select", confirmOnEmpty=False):
+  selected = [False]*len(options)
+  selection = "-*"
+  range_regex = re.compile("([0-9]+)-([0-9]+)")
+  number_regex = re.compile("([0-9]+)")
+  while selection is not "":
+    if selection == "":
+      if sum(selected) > 0 or not confirmOnEmpty:
+        break
+      while True:
+        selection = input("{} (Y/n)? ".format("Are you sure you don't want to select anything" if not isinstance(confirmOnEmpty, str) else confirmOnEmpty))
+        if re.match('[yY](?:[eE][sS])?', selection) is not None or re.match('[nN][oO]?') is not None:
+          break
+      if re.match('[yY](?:[eE][sS])?', selection) is not None:
+        break
+    cmds = selection.split(",")
+    for cmd in cmds:
+      cmd = cmd.strip()
+      val = True
+      if cmd[0] == '-':
+        cmd = cmd[1:]
+        val = False
+      if cmd == '*':
+        for i in range(0, len(selected)):
+          selected[i] = val
+        continue
+      match = range_regex.match(cmd)
+      if match is not None:
+        for i in range(int(match.group(1))-1, int(match.group(2))):
+          selected[i] = val
+        continue
+      match = number_regex.match(cmd)
+      if match is None:
+        printWithStyle(Style.Error, "Invalid command: {}".format(cmd if val else '-'+cmd))
+        continue
+      selected[int(match.group(1))-1] = val
+
+    for i, item in enumerate(options):
+      if isinstance(item, str):
+        print("{} {}: {}".format('*' if selected[i] else ' ', i+1, item))
+      else:
+        header, items = item
+        print("{} {}: {}".format('*' if selected[i] else ' ', i+1, header))
+        for item in items:
+          print("  - {}".format(item))
+    printWithStyle(Style.Info, "{} selected.".format(sum(selected)))
+    selection = input("{}{}{}>> ".format(Style.Info, selection_text, Style.Reset))
+  return selected
+
+if __name__ == "__main__":
+  ws_src_path = os.environ.get("ROS_WORKSPACE")
+  if ws_src_path is None:
+    print("No workspace found! Did you source the setup.bash?")
+    exit(1)
+  ws_root = os.path.split(ws_src_path)[0]
+  
+  print("Collecting packages", end='')
+  sys.stdout.flush()
+  
+  rospack = rospkg.RosPack([ws_src_path])
+  git_commit_id_regex = re.compile(".*-[0-9]+UTC-([a-zA-Z0-9]+)")
+  git_info_regex = re.compile("(.*\.git)#(.*)")
+
+  apt_cache = apt.Cache()
+  # Stores git repos as map: path -> clean
+  git_repos = {}
+  pkgs = rospack.list()
+  for i, pkg in enumerate(pkgs):
+    print("\rProcessed {} out of {} packages.".format(i+1, len(pkgs)), end='')
+    sys.stdout.flush()
+    full_pkg_path = rospack.get_path(pkg)
+    try:
+      repo = git.Repo(full_pkg_path, search_parent_directories=True)
+    except git.exc.InvalidGitRepositoryError:
+      # Not in a git repo
+      continue
+    pkg_ws_path = os.path.relpath(str(repo.working_dir), ws_root)
+    if not pkg_ws_path in git_repos:
+      git_repos[pkg_ws_path] = RepoState()
+    repo_state = git_repos[pkg_ws_path]
+    repo_state.pkgs.append(pkg)
+    if not repo_state.clean:
+      # This repo is dirty, don't have to check
+      continue
+    repo_state.clean = False
+
+    if repo.head.is_detached or repo.is_dirty() or len(repo.untracked_files) > 0:
+      continue
+    
+    # Make sure there are no stashed changes
+    if any(repo.git.stash('list')):
+      continue
+
+    # Make sure there are no unpushed commits
+    valid=True
+    for branch in repo.branches:
+      if any(True for _ in repo.iter_commits('{0}@{{u}}..{0}'.format(branch.name))):
+        valid=False
+        printWithStyle(Style.Warning, "\r\033[K{} has unpushed commits on branch {}!".format(pkg, branch.name))
+    if not valid:
+      continue
+
+    # Try to resolve
+    try:
+      rosdep_result = subprocess.check_output(["rosdep", "resolve", pkg], stderr=subprocess.STDOUT).splitlines()
+    except subprocess.CalledProcessError:
+      # Could not resolve pkg
+      continue
+
+    if len(rosdep_result) != 2 or rosdep_result[0] != "#apt":
+      # No binary available
+      continue
+    binary_key = rosdep_result[1]
+    if binary_key not in apt_cache:
+      # No binary available
+      continue
+
+    binary_pkg = apt_cache[binary_key]
+    repo_state.binaries[pkg] = binary_pkg
+
+    git_commit_match = git_commit_id_regex.match(str(binary_pkg.versions[0].version))
+    git_info = git_info_regex.match(str(binary_pkg.versions[0].homepage))
+    if git_info is None or git_commit_match is None:
+      # Can't determine if same state
+      continue
+    binary_branch = git_info.group(2)
+    binary_commit = git_commit_match.group(1)
+
+    local_branch = repo.active_branch.name
+    local_commit = repo.git.rev_parse("HEAD", short=len(binary_commit))
+
+    if binary_branch != local_branch or binary_commit != local_commit:
+      # Not the same state
+      continue
+
+    # Repo is not dirty
+    repo_state.clean = True
+  print("\r\033[K"+"Done.")
+
+  replaceable = [item for item in git_repos.iteritems() if item[1].clean]
+
+  selected = multiselect([(path, state.pkgs) for path, state in replaceable], "Replace", "Are you sure you don't want to replace any packages")
+
+  # Now replace what was selected
+  os.chdir(ws_root)
+  pkgs_to_clean = []
+  for i, item in enumerate(replaceable):
+    if not selected[i]:
+      continue
+    path, state = item
+    result = 0
+    printWithStyle(Style.Info, ">>> Replacing {}...".format(path))
+    install_args = ["sudo", "apt", "install"]
+    for pkg in state.pkgs:
+      # Check if installed
+      if not state.binaries[pkg].is_installed:
+        # Install
+        install_args.append(state.binaries[pkg].name)
+    if len(install_args) > 3:
+      result = subprocess.call(install_args)
+      if result != 0:
+        printWithStyle(Style.Error, "Could not install {}. Did not replace '{}'!".format(state.binaries[pkg].name, path))
+        continue
+    else:
+      printWithStyle(Style.Success, "All required packages already installed!")
+    pkgs_to_clean += state.pkgs
+    
+    print("Deleting {}...".format(path))
+    if "/../" in path:
+      printWithStyle(Style.Error, "Refusing to delete '{}'! Relative paths are not allowed!".format(path))
+      continue
+    if subprocess.call(["wstool", "remove", path]) != 0:
+      printWithStyle(Style.Error, "Failed to remove from wstool")
+    rmtree(os.path.join(ws_root, path))
+    printWithStyle(Style.Info, "Deleted {}.".format(path))
+  printWithStyle(Style.Info, "Cleaning workspace...")
+  if subprocess.call(["catkin", "clean"] + pkgs_to_clean) != 0:
+    printWithStyle(Style.Error, "Cleaning failed! Your workspace may be dirty!")
+  else:
+    printWithStyle(Style.Success, "All done!")
