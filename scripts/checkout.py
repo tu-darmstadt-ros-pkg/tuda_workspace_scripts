@@ -250,7 +250,7 @@ if __name__ == "__main__":
       success = False
       continue
     import subprocess
-    result = subprocess.call(["wstool", "set", repo_name, "--git", repo_url, "-v", branch, "-u"])
+    result = subprocess.call(["wstool", "set", repo_name, "--git", repo_url, "-v", branch, "-u", "-y"])
     if result != 0:
       printWithStyle(Style.Error, "An error occured!")
       success = False

@@ -45,19 +45,12 @@ def multiselect(options, selection_text="Select", confirmOnEmpty=False):
   selection = "-*"
   range_regex = re.compile("([0-9]+)-([0-9]+)")
   number_regex = re.compile("([0-9]+)")
-  while selection is not "":
-    if selection == "":
-      if sum(selected) > 0 or not confirmOnEmpty:
-        break
-      while True:
-        selection = input("{} (Y/n)? ".format("Are you sure you don't want to select anything" if not isinstance(confirmOnEmpty, str) else confirmOnEmpty))
-        if re.match('[yY](?:[eE][sS])?', selection) is not None or re.match('[nN][oO]?') is not None:
-          break
-      if re.match('[yY](?:[eE][sS])?', selection) is not None:
-        break
+  while True:
     cmds = selection.split(",")
     for cmd in cmds:
       cmd = cmd.strip()
+      if len(cmd) == 0:
+        continue
       val = True
       if cmd[0] == '-':
         cmd = cmd[1:]
@@ -87,6 +80,16 @@ def multiselect(options, selection_text="Select", confirmOnEmpty=False):
           print("  - {}".format(item))
     printWithStyle(Style.Info, "{} selected.".format(sum(selected)))
     selection = input("{}{}{}>> ".format(Style.Info, selection_text, Style.Reset))
+    if selection == "":
+      if sum(selected) > 0 or confirmOnEmpty == False:
+        break
+      while True:
+        selection = input("{} (Y/n)? ".format("Are you sure you don't want to select anything" if not isinstance(confirmOnEmpty, str) else confirmOnEmpty))
+        if re.match('[yY](?:[eE][sS])?', selection) is not None or re.match('[nN][oO]?', selection) is not None:
+          break
+      if re.match('[yY](?:[eE][sS])?', selection) is not None:
+        break
+      selection = ""
   return selected
 
 if __name__ == "__main__":
@@ -182,6 +185,8 @@ if __name__ == "__main__":
   replaceable = [item for item in git_repos.iteritems() if item[1].clean]
 
   selected = multiselect([(path, state.pkgs) for path, state in replaceable], "Replace", "Are you sure you don't want to replace any packages")
+  if sum(selected) == 0:
+    exit(0)
 
   # Now replace what was selected
   os.chdir(ws_root)
