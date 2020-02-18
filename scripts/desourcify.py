@@ -17,6 +17,12 @@ try:
 except ImportError:
   print("GitPython is required! Install using 'pip install --user gitpython'")
   exit(1)
+import argparse
+try:
+  import argcomplete
+  __argcomplete = True
+except ImportError:
+  __argcomplete = False
 import os
 import re
 import rospkg
@@ -98,6 +104,14 @@ if __name__ == "__main__":
     print("No workspace found! Did you source the setup.bash?")
     exit(1)
   ws_root = os.path.split(ws_src_path)[0]
+  roswss_prefix = os.environ.get("ROSWSS_PREFIX", "roswss")
+
+  parser = argparse.ArgumentParser(usage="{} desourcify".format(roswss_prefix),
+                                   description="Searches for repositories in your workspace that could be deleted and replaced by binaries.")
+  package_arg = parser.add_argument("-v", "--verbose", action="store_true", default=False, help="Vebose output, e.g., why a repo was not replaced.")
+  if __argcomplete:
+    argcomplete.autocomplete(parser)
+  args = parser.parse_args()
   
   print("Collecting packages", end='')
   sys.stdout.flush()
@@ -111,18 +125,19 @@ if __name__ == "__main__":
   git_repos = {}
   pkgs = rospack.list()
   for i, pkg in enumerate(pkgs):
-    print("\rProcessed {} out of {} packages.".format(i+1, len(pkgs)), end='')
+    print("\033[KProcessed {} out of {} packages.".format(i+1, len(pkgs)), end='\r')
     sys.stdout.flush()
     full_pkg_path = rospack.get_path(pkg)
     try:
       repo = git.Repo(full_pkg_path, search_parent_directories=True)
     except git.exc.InvalidGitRepositoryError:
       # Not in a git repo
+      if args.verbose: print("\033[K{} not removable because it is not in a git repo.".format(pkg))
       continue
-    pkg_ws_path = os.path.relpath(str(repo.working_dir), ws_root)
-    if not pkg_ws_path in git_repos:
-      git_repos[pkg_ws_path] = RepoState()
-    repo_state = git_repos[pkg_ws_path]
+    repo_ws_path = os.path.relpath(str(repo.working_dir), ws_root)
+    if not repo_ws_path in git_repos:
+      git_repos[repo_ws_path] = RepoState()
+    repo_state = git_repos[repo_ws_path]
     repo_state.pkgs.append(pkg)
     if not repo_state.clean:
       # This repo is dirty, don't have to check
@@ -130,10 +145,12 @@ if __name__ == "__main__":
     repo_state.clean = False
 
     if repo.head.is_detached or repo.is_dirty() or len(repo.untracked_files) > 0:
+      if args.verbose: print("\033[K{} not removable because it is dirty or contains untracked files.".format(repo_ws_path))
       continue
     
     # Make sure there are no stashed changes
     if any(repo.git.stash('list')):
+      if args.verbose: print("\033[K{} not removable because it has stashed changes.".format(repo_ws_path))
       continue
 
     # Make sure there are no unpushed commits
@@ -141,8 +158,9 @@ if __name__ == "__main__":
     for branch in repo.branches:
       if any(True for _ in repo.iter_commits('{0}@{{u}}..{0}'.format(branch.name))):
         valid=False
-        printWithStyle(Style.Warning, "\r\033[K{} has unpushed commits on branch {}!".format(pkg, branch.name))
+        printWithStyle(Style.Warning, "\033[K{} has unpushed commits on branch {}!".format(pkg, branch.name))
     if not valid:
+      if args.verbose: print("\033[K{} not removable because it has unpushed commits.".format(repo_ws_path))
       continue
 
     # Try to resolve
@@ -150,14 +168,17 @@ if __name__ == "__main__":
       rosdep_result = subprocess.check_output(["rosdep", "resolve", pkg], stderr=subprocess.STDOUT).splitlines()
     except subprocess.CalledProcessError:
       # Could not resolve pkg
+      if args.verbose: print("\033[K{} not removable because rosdep could not find an entry for {}.".format(repo_ws_path, pkg))
       continue
 
     if len(rosdep_result) != 2 or rosdep_result[0] != "#apt":
       # No binary available
+      if args.verbose: print("\033[K{} not removable because rosdep could not find a debian package for {}.".format(repo_ws_path, pkg))
       continue
     binary_key = rosdep_result[1]
     if binary_key not in apt_cache:
       # No binary available
+      if args.verbose: print("\033[K{} not removable because the debian package for {} is not in the apt cache (try apt update).".format(repo_ws_path, pkg))
       continue
 
     binary_pkg = apt_cache[binary_key]
@@ -167,6 +188,7 @@ if __name__ == "__main__":
     git_info = git_info_regex.match(str(binary_pkg.versions[0].homepage))
     if git_info is None or git_commit_match is None:
       # Can't determine if same state
+      if args.verbose: print("\033[K{} not removable because I could not detect whether {} is on the same state as the debian package.".format(repo_ws_path, pkg))
       continue
     binary_branch = git_info.group(2)
     binary_commit = git_commit_match.group(1)
@@ -176,11 +198,12 @@ if __name__ == "__main__":
 
     if binary_branch != local_branch or binary_commit != local_commit:
       # Not the same state
+      if args.verbose: print("\033[K{} not removable because the debian package for {} is built using a different branch or HEAD.".format(repo_ws_path, pkg))
       continue
 
     # Repo is not dirty
     repo_state.clean = True
-  print("\r\033[K"+"Done.")
+  print("\033[KDone.")
 
   replaceable = [item for item in git_repos.iteritems() if item[1].clean]
 
