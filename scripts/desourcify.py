@@ -108,7 +108,7 @@ if __name__ == "__main__":
 
   parser = argparse.ArgumentParser(usage="{} desourcify".format(roswss_prefix),
                                    description="Searches for repositories in your workspace that could be deleted and replaced by binaries.")
-  package_arg = parser.add_argument("-v", "--verbose", action="store_true", default=False, help="Vebose output, e.g., why a repo was not replaced.")
+  package_arg = parser.add_argument("-v", "--verbose", action="store_true", default=False, help="Verbose output, e.g., why a repo was not replaced.")
   if __argcomplete:
     argcomplete.autocomplete(parser)
   args = parser.parse_args()
