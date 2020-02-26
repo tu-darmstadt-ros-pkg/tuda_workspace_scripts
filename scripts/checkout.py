@@ -86,42 +86,44 @@ def selectPackages(stdscr, packages):
       available_rows = ROWS - 1 - cursor_pos[0] - 4  # 2 border top and bottom
 
       filtered_packages = filter(lambda x: search_string in x, packages)
-      if selection not in filtered_packages and len(filtered_packages) > 0:
-        selection = filtered_packages[0]
-      positions = []
-      col = 0
-      row = 0
-      for pkg in filtered_packages:
-        if len(pkg) + col >= COLS:
-          row += 2
-          col = 0
-        positions.append((row, col))
-        col += len(pkg) + 2
+      if len(filtered_packages) > 0:
+        if selection not in filtered_packages:
+          selection = filtered_packages[0]
+        positions = []
+        col = 0
+        row = 0
+        for pkg in filtered_packages:
+          if len(pkg) + col >= COLS:
+            row += 2
+            col = 0
+          positions.append((row, col))
+          col += len(pkg) + 2
 
-      selected_index = filtered_packages.index(selection)
-      if positions[selected_index][0] < first_visible_row:
-        first_visible_row = positions[selected_index][0]
-      elif positions[selected_index][0] > first_visible_row + available_rows:
-        first_visible_row = positions[selected_index][0] - available_rows
 
-      offset_row = cursor_pos[0] + 2
-      if first_visible_row > 0:
-        stdscr.addstr(cursor_pos[0] + 1, 0, "...", curses.A_STANDOUT)
+        selected_index = filtered_packages.index(selection) if selection is not None else 0
+        if positions[selected_index][0] < first_visible_row:
+          first_visible_row = positions[selected_index][0]
+        elif positions[selected_index][0] > first_visible_row + available_rows:
+          first_visible_row = positions[selected_index][0] - available_rows
 
-      for pos, pkg in zip(positions, filtered_packages):
-        row, col = pos
-        if row >= first_visible_row and row <= first_visible_row + available_rows:
-          stdscr.move(offset_row + row - first_visible_row, col)
-          attr = curses.A_STANDOUT
-          if pkg in selected:
-            attr = curses.color_pair(2 if pkg != selection else 3)
-          elif pkg == selection:
-            attr = curses.color_pair(1)
-          stdscr.addstr(pkg if len(pkg) < COLS else pkg[0:COLS-4]+"...", attr)
-          stdscr.addstr(" " * min(COLS - col - 1 - len(pkg), 2))
+        offset_row = cursor_pos[0] + 2
+        if first_visible_row > 0:
+          stdscr.addstr(cursor_pos[0] + 1, 0, "...", curses.A_STANDOUT)
 
-      if positions[-1][0] - first_visible_row > available_rows:
-        stdscr.addstr(offset_row + available_rows + 1, 0, "...", curses.A_STANDOUT)
+        for pos, pkg in zip(positions, filtered_packages):
+          row, col = pos
+          if row >= first_visible_row and row <= first_visible_row + available_rows:
+            stdscr.move(offset_row + row - first_visible_row, col)
+            attr = curses.A_STANDOUT
+            if pkg in selected:
+              attr = curses.color_pair(2 if pkg != selection else 3)
+            elif pkg == selection:
+              attr = curses.color_pair(1)
+            stdscr.addstr(pkg if len(pkg) < COLS else pkg[0:COLS-4]+"...", attr)
+            stdscr.addstr(" " * min(COLS - col - 1 - len(pkg), 2))
+
+        if positions[-1][0] - first_visible_row > available_rows:
+          stdscr.addstr(offset_row + available_rows + 1, 0, "...", curses.A_STANDOUT)
 
       if len(selected) == 0:
         stdscr.addstr(ROWS-1, 0, "Press space to add highlighted package"[0:COLS-1], curses.A_STANDOUT)
