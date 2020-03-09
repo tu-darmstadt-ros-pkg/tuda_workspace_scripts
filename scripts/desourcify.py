@@ -109,6 +109,7 @@ if __name__ == "__main__":
   parser = argparse.ArgumentParser(usage="{} desourcify".format(roswss_prefix),
                                    description="Searches for repositories in your workspace that could be deleted and replaced by binaries.")
   package_arg = parser.add_argument("-v", "--verbose", action="store_true", default=False, help="Verbose output, e.g., why a repo was not replaced.")
+  parser.add_argument("--no-debs", action="store_true", default=False, help="Don't check for and don't install replacement debian packages.")
   if __argcomplete:
     argcomplete.autocomplete(parser)
   args = parser.parse_args()
@@ -163,43 +164,45 @@ if __name__ == "__main__":
       if args.verbose: print("\033[K{} not removable because it has unpushed commits.".format(repo_ws_path))
       continue
 
-    # Try to resolve
-    try:
-      rosdep_result = subprocess.check_output(["rosdep", "resolve", pkg], stderr=subprocess.STDOUT).splitlines()
-    except subprocess.CalledProcessError:
-      # Could not resolve pkg
-      if args.verbose: print("\033[K{} not removable because rosdep could not find an entry for {}.".format(repo_ws_path, pkg))
-      continue
+    # Check for debian package
+    if not args.no_debs:
+      # Try to resolve
+      try:
+        rosdep_result = subprocess.check_output(["rosdep", "resolve", pkg], stderr=subprocess.STDOUT).splitlines()
+      except subprocess.CalledProcessError:
+        # Could not resolve pkg
+        if args.verbose: print("\033[K{} not removable because rosdep could not find an entry for {}.".format(repo_ws_path, pkg))
+        continue
 
-    if len(rosdep_result) != 2 or rosdep_result[0] != "#apt":
-      # No binary available
-      if args.verbose: print("\033[K{} not removable because rosdep could not find a debian package for {}.".format(repo_ws_path, pkg))
-      continue
-    binary_key = rosdep_result[1]
-    if binary_key not in apt_cache:
-      # No binary available
-      if args.verbose: print("\033[K{} not removable because the debian package for {} is not in the apt cache (try apt update).".format(repo_ws_path, pkg))
-      continue
+      if len(rosdep_result) != 2 or rosdep_result[0] != "#apt":
+        # No binary available
+        if args.verbose: print("\033[K{} not removable because rosdep could not find a debian package for {}.".format(repo_ws_path, pkg))
+        continue
+      binary_key = rosdep_result[1]
+      if binary_key not in apt_cache:
+        # No binary available
+        if args.verbose: print("\033[K{} not removable because the debian package for {} is not in the apt cache (try apt update).".format(repo_ws_path, pkg))
+        continue
 
-    binary_pkg = apt_cache[binary_key]
-    repo_state.binaries[pkg] = binary_pkg
+      binary_pkg = apt_cache[binary_key]
+      repo_state.binaries[pkg] = binary_pkg
 
-    git_commit_match = git_commit_id_regex.match(str(binary_pkg.versions[0].version))
-    git_info = git_info_regex.match(str(binary_pkg.versions[0].homepage))
-    if git_info is None or git_commit_match is None:
-      # Can't determine if same state
-      if args.verbose: print("\033[K{} not removable because I could not detect whether {} is on the same state as the debian package.".format(repo_ws_path, pkg))
-      continue
-    binary_branch = git_info.group(2)
-    binary_commit = git_commit_match.group(1)
+      git_commit_match = git_commit_id_regex.match(str(binary_pkg.versions[0].version))
+      git_info = git_info_regex.match(str(binary_pkg.versions[0].homepage))
+      if git_info is None or git_commit_match is None:
+        # Can't determine if same state
+        if args.verbose: print("\033[K{} not removable because I could not detect whether {} is on the same state as the debian package.".format(repo_ws_path, pkg))
+        continue
+      binary_branch = git_info.group(2)
+      binary_commit = git_commit_match.group(1)
 
-    local_branch = repo.active_branch.name
-    local_commit = repo.git.rev_parse("HEAD", short=len(binary_commit))
+      local_branch = repo.active_branch.name
+      local_commit = repo.git.rev_parse("HEAD", short=len(binary_commit))
 
-    if binary_branch != local_branch or binary_commit != local_commit:
-      # Not the same state
-      if args.verbose: print("\033[K{} not removable because the debian package for {} is built using a different branch or HEAD.".format(repo_ws_path, pkg))
-      continue
+      if binary_branch != local_branch or binary_commit != local_commit:
+        # Not the same state
+        if args.verbose: print("\033[K{} not removable because the debian package for {} is built using a different branch or HEAD.".format(repo_ws_path, pkg))
+        continue
 
     # Repo is not dirty
     repo_state.clean = True
@@ -220,19 +223,20 @@ if __name__ == "__main__":
     path, state = item
     result = 0
     printWithStyle(Style.Info, ">>> Replacing {}...".format(path))
-    install_args = ["sudo", "apt", "install"]
-    for pkg in state.pkgs:
-      # Check if installed
-      if not state.binaries[pkg].is_installed:
-        # Install
-        install_args.append(state.binaries[pkg].name)
-    if len(install_args) > 3:
-      result = subprocess.call(install_args)
-      if result != 0:
-        printWithStyle(Style.Error, "Could not install {}. Did not replace '{}'!".format(state.binaries[pkg].name, path))
-        continue
-    else:
-      printWithStyle(Style.Success, "All required packages already installed!")
+    if not args.no_debs:
+      install_args = ["sudo", "apt", "install"]
+      for pkg in state.pkgs:
+        # Check if installed
+        if not state.binaries[pkg].is_installed:
+          # Install
+          install_args.append(state.binaries[pkg].name)
+      if len(install_args) > 3:
+        result = subprocess.call(install_args)
+        if result != 0:
+          printWithStyle(Style.Error, "Could not install {}. Did not replace '{}'!".format(state.binaries[pkg].name, path))
+          continue
+      else:
+        printWithStyle(Style.Success, "All required packages already installed!")
     pkgs_to_clean += state.pkgs
     
     print("Deleting {}...".format(path))
@@ -243,8 +247,11 @@ if __name__ == "__main__":
       printWithStyle(Style.Error, "Failed to remove from wstool")
     rmtree(os.path.join(ws_root, path))
     printWithStyle(Style.Info, "Deleted {}.".format(path))
-  printWithStyle(Style.Info, "Cleaning workspace...")
-  if subprocess.call(["catkin", "clean"] + pkgs_to_clean) != 0:
-    printWithStyle(Style.Error, "Cleaning failed! Your workspace may be dirty!")
-  else:
-    printWithStyle(Style.Success, "All done!")
+  
+  if len(pkgs_to_clean) != 0:
+    printWithStyle(Style.Info, "Cleaning workspace...")
+    if subprocess.call(["catkin", "clean"] + pkgs_to_clean) != 0:
+      printWithStyle(Style.Error, "Cleaning failed! Your workspace may be dirty!")
+      exit(1)
+  
+  printWithStyle(Style.Success, "All done!")

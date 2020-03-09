@@ -72,6 +72,7 @@ def selectPackages(stdscr, packages):
   curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_GREEN)
   curses.init_pair(3, curses.COLOR_GREEN, curses.COLOR_BLUE)
   first_visible_row = 0
+  enter_pressed_empty = False  # Set to true if enter pressed without selection to confirm before exit
   while True:
     stdscr.clear()
     ROWS, COLS = stdscr.getmaxyx()
@@ -125,7 +126,9 @@ def selectPackages(stdscr, packages):
         if positions[-1][0] - first_visible_row > available_rows:
           stdscr.addstr(offset_row + available_rows + 1, 0, "...", curses.A_STANDOUT)
 
-      if len(selected) == 0:
+      if len(selected) == 0 and enter_pressed_empty:
+        stdscr.addstr(ROWS-1, 0, "Press enter again to exit or space to add highlighted package"[0:COLS-1], curses.A_STANDOUT)
+      elif len(selected) == 0:
         stdscr.addstr(ROWS-1, 0, "Press space to add highlighted package"[0:COLS-1], curses.A_STANDOUT)
       else:
         stdscr.addstr(ROWS-1, 0, "{} packages selected".format(len(selected))[0:COLS-1], curses.A_STANDOUT)
@@ -137,11 +140,17 @@ def selectPackages(stdscr, packages):
       user_input = stdscr.getkey()
     except KeyboardInterrupt:
       exit(0)
+    
     if valid_regex.match(user_input) is not None and not user_input.startswith("KEY"):
       search_string += user_input
     elif user_input == "KEY_BACKSPACE":
       search_string = search_string[0:-1]
     elif "\n" in user_input:
+      if len(selected) == 0:
+        if enter_pressed_empty:
+          break
+        enter_pressed_empty = True
+        continue
       break
     elif user_input == " " and len(filtered_packages) > 0:
       if selection in selected:
@@ -166,6 +175,8 @@ def selectPackages(stdscr, packages):
         if closest is None or abs(positions[closest][1] + len(filtered_packages[closest]) / 2 - center[1]) > abs(c[1] + len(filtered_packages[i]) / 2 - center[1]):
           closest = i
       selection = filtered_packages[closest]
+
+    enter_pressed_empty = False
   return selected
 
 
@@ -173,9 +184,9 @@ if __name__ == "__main__":
   ws_src_path = os.environ.get("ROS_WORKSPACE")
   roswss_prefix = os.environ.get("ROSWSS_PREFIX", "roswss")
 
-  parser = argparse.ArgumentParser(usage="{} checkout".format(roswss_prefix),
+  parser = argparse.ArgumentParser(usage="{} checkout [packages]".format(roswss_prefix),
                                    description="Checks out one or multiple package(s) currently installed as binaries into your workspace.")
-  package_arg = parser.add_argument("--packages", nargs="+", help="Specify one or multiple packages to checkout. Non-interactive.")
+  package_arg = parser.add_argument("packages", nargs="*", help="Specify one or multiple packages to checkout. Non-interactive. If you don't specify a package interactive mode is started.")
 
   if __argcomplete:
     argcomplete.autocomplete(parser)
@@ -214,7 +225,8 @@ if __name__ == "__main__":
       exit(1)
     
     to_replace = curses.wrapper(selectPackages, sorted(can_be_replaced))
-
+    if len(to_replace) == 0:
+      exit(0)
     
   success = True
   for package in to_replace:
