@@ -209,6 +209,9 @@ if __name__ == "__main__":
   print("\033[KDone.")
 
   replaceable = [item for item in git_repos.iteritems() if item[1].clean]
+  if len(replaceable) == 0:
+    printWithStyle(Style.Info, "Nothing to replace. Run again with -v (or --verbose) to find out why.")
+    exit(0)
 
   selected = multiselect([(path, state.pkgs) for path, state in replaceable], "Replace", "Are you sure you don't want to replace any packages")
   if sum(selected) == 0:
