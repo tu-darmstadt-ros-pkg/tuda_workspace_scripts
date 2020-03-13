@@ -25,6 +25,7 @@ except ImportError:
   __argcomplete = False
 import os
 import re
+import rosdep2
 import rospkg
 from shutil import rmtree
 import subprocess
@@ -118,6 +119,11 @@ if __name__ == "__main__":
   sys.stdout.flush()
   
   rospack = rospkg.RosPack([ws_src_path])
+  rosdep_installer_context = rosdep2.create_default_installer_context()
+  rosdep_lookup = rosdep2.RosdepLookup.create_from_rospkg()
+  rosdep_os_name, rosdep_os_version = rosdep_installer_context.get_os_name_and_version()
+  rosdep_view = rosdep_lookup.get_rosdep_view(rosdep2.rospkg_loader.DEFAULT_VIEW_KEY)
+  rosdep_apt_installer = rosdep_installer_context.get_installer("apt")
   git_commit_id_regex = re.compile(".*-[0-9]+UTC-([a-zA-Z0-9]+)")
   git_info_regex = re.compile("(.*\.git)#(.*)")
 
@@ -168,17 +174,23 @@ if __name__ == "__main__":
     if not args.no_debs:
       # Try to resolve
       try:
-        rosdep_result = subprocess.check_output(["rosdep", "resolve", pkg], stderr=subprocess.STDOUT).splitlines()
-      except subprocess.CalledProcessError:
+        dep = rosdep_view.lookup(pkg)
+      except rosdep2.ResolutionError:
         # Could not resolve pkg
         if args.verbose: print("\033[K{} not removable because rosdep could not find an entry for {}.".format(repo_ws_path, pkg))
         continue
+      rosdep_result = dep.get_rule_for_platform(rosdep_os_name, rosdep_os_version, ["apt"], "apt")
 
-      if len(rosdep_result) != 2 or rosdep_result[0] != "#apt":
+      if rosdep_result is None or rosdep_result[0] != "apt":
         # No binary available
         if args.verbose: print("\033[K{} not removable because rosdep could not find a debian package for {}.".format(repo_ws_path, pkg))
         continue
-      binary_key = rosdep_result[1]
+      apt_pkgs = rosdep_apt_installer.resolve(rosdep_result[1])
+      if len(apt_pkgs) != 1:
+        # More than one binary, not sure if possible
+        if args.verbose: print("\033[K{} not removable because rosdep resolved multiple debian packages for {} and this is not currently handled. Please create an issue.".format(repo_ws_path, pkg))
+        continue
+      binary_key = apt_pkgs[0]
       if binary_key not in apt_cache:
         # No binary available
         if args.verbose: print("\033[K{} not removable because the debian package for {} is not in the apt cache (try apt update).".format(repo_ws_path, pkg))
@@ -227,7 +239,7 @@ if __name__ == "__main__":
     result = 0
     printWithStyle(Style.Info, ">>> Replacing {}...".format(path))
     if not args.no_debs:
-      install_args = ["sudo", "apt", "install"]
+      install_args = ["sudo", "apt", "install", "-y"]
       for pkg in state.pkgs:
         # Check if installed
         if not state.binaries[pkg].is_installed:
