@@ -163,9 +163,13 @@ if __name__ == "__main__":
     # Make sure there are no unpushed commits
     valid=True
     for branch in repo.branches:
-      if any(True for _ in repo.iter_commits('{0}@{{u}}..{0}'.format(branch.name))):
-        valid=False
-        printWithStyle(Style.Warning, "\033[K{} has unpushed commits on branch {}!".format(pkg, branch.name))
+      try:
+        if any(True for _ in repo.iter_commits('{0}@{{u}}..{0}'.format(branch.name))):
+          valid=False
+          printWithStyle(Style.Warning, "\033[K{} has unpushed commits on branch {}!".format(pkg, branch.name))
+      except git.exc.GitCommandError:
+        valid = False
+        printWithStyle(Style.Warning, "\033[K{} has no upstream configured for branch {}!".format(pkg, branch.name))
     if not valid:
       if args.verbose: print("\033[K{} not removable because it has unpushed commits.".format(repo_ws_path))
       continue
@@ -175,7 +179,7 @@ if __name__ == "__main__":
       # Try to resolve
       try:
         dep = rosdep_view.lookup(pkg)
-      except rosdep2.ResolutionError:
+      except (rosdep2.ResolutionError, KeyError):
         # Could not resolve pkg
         if args.verbose: print("\033[K{} not removable because rosdep could not find an entry for {}.".format(repo_ws_path, pkg))
         continue
