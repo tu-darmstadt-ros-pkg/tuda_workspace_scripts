@@ -224,7 +224,7 @@ if __name__ == "__main__":
     repo_state.clean = True
   print("\033[KDone.")
 
-  replaceable = [item for item in git_repos.iteritems() if item[1].clean]
+  replaceable = sorted([item for item in git_repos.iteritems() if item[1].clean])
   if len(replaceable) == 0:
     printWithStyle(Style.Info, "Nothing to replace. Run again with -v (or --verbose) to find out why.")
     exit(0)
