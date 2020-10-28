@@ -7,12 +7,12 @@ from __future__ import print_function
 try:
   import apt
 except ImportError:
-  print("python-apt is required! Install using 'sudo apt install python-apt'")
+  print("python3-apt is required! Install using 'sudo apt install python3-apt'")
   exit(1)
 try:
   import git
 except ImportError:
-  print("GitPython is required! Install using 'pip install --user gitpython'")
+  print("GitPython is required! Install using 'pip3 install --user gitpython'")
   exit(1)
 import argparse
 try:

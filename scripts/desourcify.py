@@ -10,12 +10,12 @@ from builtins import input
 try:
   import apt
 except ImportError:
-  print("python-apt is required! Install using 'sudo apt install python-apt'")
+  print("python-apt is required! Install using 'sudo apt install python3-apt'")
   exit(1)
 try:
   import git
 except ImportError:
-  print("GitPython is required! Install using 'pip install --user gitpython'")
+  print("GitPython is required! Install using 'pip3 install --user gitpython'")
   exit(1)
 import argparse
 try:
@@ -224,7 +224,7 @@ if __name__ == "__main__":
     repo_state.clean = True
   print("\033[KDone.")
 
-  replaceable = sorted([item for item in git_repos.iteritems() if item[1].clean])
+  replaceable = sorted([item for item in git_repos.items() if item[1].clean])
   if len(replaceable) == 0:
     printWithStyle(Style.Info, "Nothing to replace. Run again with -v (or --verbose) to find out why.")
     exit(0)

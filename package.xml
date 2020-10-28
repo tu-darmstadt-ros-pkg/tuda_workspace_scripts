@@ -1,5 +1,6 @@
 <?xml version="1.0"?>
-<package format="2">
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
   <name>tuda_workspace_scripts</name>
   <version>0.1.0</version>
   <description>The tuda_workspace_scripts package</description>
@@ -23,7 +24,6 @@
   <!-- The *_depend tags are used to specify dependencies -->
   <!-- Dependencies can be catkin packages or system dependencies -->
   <buildtool_depend>catkin</buildtool_depend>
-  <exec_depend>python-argparse</exec_depend>
-  <exec_depend>python-future</exec_depend>
+  <exec_depend>python-gitpython-pip</exec_depend>
 
 </package>
