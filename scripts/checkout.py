@@ -86,7 +86,7 @@ def selectPackages(stdscr, packages):
       cursor_pos = stdscr.getyx()
       available_rows = ROWS - 1 - cursor_pos[0] - 4  # 2 border top and bottom
 
-      filtered_packages = list(filter(lambda x: search_string in x, packages))
+      filtered_packages = filter(lambda x: search_string in x, packages)
       if len(filtered_packages) > 0:
         if selection not in filtered_packages:
           selection = filtered_packages[0]
