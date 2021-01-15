@@ -59,7 +59,7 @@ class RosdepResolver:
         return None
       return pkgs
     except BaseException as e:
-      printWithStyle(Style.Error, "Could not resolve apt for package {}. Exception: {}".format(pkg, str(e.message)))
+      printWithStyle(Style.Error, "Could not resolve apt for package {}. Exception: {}".format(pkg, repr(e)))
     return None
 
 
