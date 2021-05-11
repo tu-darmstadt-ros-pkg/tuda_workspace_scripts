@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # PYTHON_ARGCOMPLETE_OK
 # This script checks out a package only available as binary, if the homepage
 # field follows the scheme ${GIT_REPO}#${BRANCH}
@@ -39,6 +39,14 @@ class Style:
 def printWithStyle(style, msg):
   print(style + msg + Style.Reset)
   
+
+class PackageChoiceCompleter:
+  def __init__(self, rospack):
+    self.rospack = rospack
+
+  def __call__(self, **kwargs):
+    packages = self.rospack.list()
+    return [pkg for pkg in packages]
 
 class RosdepResolver:
   def __init__(self):
@@ -183,12 +191,15 @@ def selectPackages(stdscr, packages):
 if __name__ == "__main__":
   ws_src_path = os.environ.get("ROS_WORKSPACE")
   roswss_prefix = os.environ.get("ROSWSS_PREFIX", "roswss")
+  rospack = RosPack()
 
   parser = argparse.ArgumentParser(usage="{} checkout [packages]".format(roswss_prefix),
                                    description="Checks out one or multiple package(s) currently installed as binaries into your workspace.")
-  package_arg = parser.add_argument("packages", nargs="*", help="Specify one or multiple packages to checkout. Non-interactive. If you don't specify a package interactive mode is started.")
+  package_arg = parser.add_argument("packages", nargs="*",
+                                    help="Specify one or multiple packages to checkout. Non-interactive. If you don't specify a package interactive mode is started.")
 
   if __argcomplete:
+    package_arg.completer = PackageChoiceCompleter(rospack)
     argcomplete.autocomplete(parser)
   args = parser.parse_args()
 
@@ -196,7 +207,6 @@ if __name__ == "__main__":
   sys.stdout.flush()
   rosdep_resolver = RosdepResolver()
   apt_cache = apt.Cache()
-  rospack = RosPack()
   git_info_regex = re.compile("(.*\.git)#(.*)")
 
   to_replace = args.packages or []

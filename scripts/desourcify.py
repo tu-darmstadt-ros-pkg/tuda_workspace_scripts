@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # PYTHON_ARGCOMPLETE_OK
 # This script checks all repositories located in the workspace folder and for each package
 # resolves the binary using rosdep, the binary info is checked for the homepage. If the
@@ -229,8 +229,12 @@ if __name__ == "__main__":
     printWithStyle(Style.Info, "Nothing to replace. Run again with -v (or --verbose) to find out why.")
     exit(0)
 
-  selected = multiselect([(path, state.pkgs) for path, state in replaceable], "Replace", "Are you sure you don't want to replace any packages")
-  if sum(selected) == 0:
+  try:
+    selected = multiselect([(path, state.pkgs) for path, state in replaceable], "Replace", "Are you sure you don't want to replace any packages")
+    if sum(selected) == 0:
+      exit(0)
+  except KeyboardInterrupt:
+    print("") # New line before exit
     exit(0)
 
   # Now replace what was selected
