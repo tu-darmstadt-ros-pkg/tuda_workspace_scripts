@@ -10,7 +10,7 @@ _TMP_REMOTE_SIM_MASTER=$(cat /tmp/remote-sim.master)
 _TMP_REMOTE_SIM_IP=$(ip -br a show $(cat /tmp/remote-sim.device) primary | tr -s ' ' | cut -d' ' -f3 | cut -d'/' -f1)
 
 export GAZEBO_MASTER_URI=http://${_TMP_REMOTE_SIM_MASTER}:11345
-echo_note "Set GAZEBO_MASTER_URI to ${GAZEBO_URI}"
+echo_note "Set GAZEBO_MASTER_URI to ${GAZEBO_MASTER_URI}"
 export ROS_MASTER_URI=http://${_TMP_REMOTE_SIM_MASTER}:11311
 echo_note "Set ROS_MASTER_URI to ${ROS_MASTER_URI}"
 export GAZEBO_IP=${_TMP_REMOTE_SIM_IP}
