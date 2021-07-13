@@ -100,8 +100,8 @@ def handle_user(remote, conn, hostname):
         stderr = stderr_socket.makefile('wb', buffering=None)
         # Start process
         envs = request.get('envs', {})
-        env_args = list(map(lambda name: f'-e {name}="{envs[name]}"', envs.keys()))
-        sim_process = subprocess.Popen(['/usr/bin/docker', 'run', '--rm'] + env_args + ['--net=docker-net', f'--hostname={hostname}.hector.lan', f'--name={hostname}', 'hector-noetic'],
+        env_args = map(lambda name: ['-e', f'{name}={envs[name]}'], envs.keys())
+        sim_process = subprocess.Popen(['/usr/bin/docker', 'run', '--rm'] + [x for env_arg in env_args for x in env_arg] + ['--net=docker-net', f'--hostname={hostname}.hector.lan', f'--name={hostname}', 'hector-noetic'],
                                         stdout=stdout, stderr=stderr)
         CONNECTIONS[hostname] = {'stdout': stdout_socket, 'stderr': stderr_socket, 'conn': conn}
         print(f"Started {hostname}")
@@ -159,8 +159,8 @@ def host_server(ip, port):
   print('Starting DNS')
   try:
 # nameserver: docker run --restart=unless-stopped -v /var/run/docker.sock:/var/run/docker.sock --net=docker-net defreitas/dns-proxy-server
-    dns_container = client.containers.run('defreitas/dns-proxy-server',
-                                          network='docker-net', volumes=['/var/run/docker.sock'],
+    dns_container = client.containers.run('defreitas/dns-proxy-server', network='docker-net',
+                                          volumes={'/var/run/docker.sock': {'bind': '/var/run/docker.sock', 'mode': 'rw'}},
                                           restart_policy={'Name': 'on-failure', 'MaximumRetryCount': 5},
                                           detach=True)
     network_settings = client.api.inspect_container(dns_container.name).get('NetworkSettings', {})
