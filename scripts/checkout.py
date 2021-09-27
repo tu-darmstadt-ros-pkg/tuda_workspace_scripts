@@ -27,6 +27,7 @@ from rosdep2.lookup import RosdepLookup
 from rosdep2.rospkg_loader import DEFAULT_VIEW_KEY
 from rospkg import RosPack
 import os
+import re
 import sys
 
 class Style:
@@ -39,6 +40,13 @@ class Style:
 def printWithStyle(style, msg):
   print(style + msg + Style.Reset)
   
+
+https_regex = re.compile("https?://([^/]+)/(.*)")
+def convert_to_ssh(url):
+  match = https_regex.match(url)
+  if match is None or len(match.groups()) != 2:
+    return url
+  return f'git@{match.group(1)}:{match.group(2)}'
 
 class PackageChoiceCompleter:
   def __init__(self, rospack):
@@ -195,6 +203,7 @@ if __name__ == "__main__":
 
   parser = argparse.ArgumentParser(usage="{} checkout [packages]".format(roswss_prefix),
                                    description="Checks out one or multiple package(s) currently installed as binaries into your workspace.")
+  parser.add_argument("--https", default=False, action='store_true', help="Do not convert remote to ssh if it is a https url.")
   package_arg = parser.add_argument("packages", nargs="*",
                                     help="Specify one or multiple packages to checkout. Non-interactive. If you don't specify a package interactive mode is started.")
 
@@ -258,6 +267,8 @@ if __name__ == "__main__":
       success = False
       continue
     repo_url = str(git_info.group(1))
+    if not args.https:
+      repo_url = convert_to_ssh(repo_url)
     branch = git_info.group(2)
     printWithStyle(Style.Info, "Checking out branch '{}' from '{}'...".format(branch, repo_url))
 
