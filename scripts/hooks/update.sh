@@ -14,7 +14,7 @@ echo_info ">>> Pulling system package updates"
 if [[ $_NO_SUDO == 1 ]]; then
     echo "Skipped because --no-sudo option was specified."
 else
-    sudo apt update
+    sudo apt-get update
     AVAILABLE_SYSTEM_PACKAGE_UPDATES=$(apt-get -qq -s upgrade | grep Inst | cut -d ' ' -f 2 | grep "^[[:blank:]]*${ROSWSS_PREFIX}-\|^[[:blank:]]*ros-")
     if [ ! -z "${AVAILABLE_SYSTEM_PACKAGE_UPDATES[@]}" ]; then
         sudo apt install --only-upgrade ${AVAILABLE_SYSTEM_PACKAGE_UPDATES[@]}
