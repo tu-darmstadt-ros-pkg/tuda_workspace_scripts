@@ -33,8 +33,11 @@ def launch_subprocess(command, cwd=None, stdout=None, stderr=None):
                 process.terminate()
         raise
 
-
-def update() -> bool:
+# We ignore all args here, because we don't need them
+def update(**_) -> bool:
+    """
+    Update all git repositories in the workspace.
+    """
     ws_root_path = get_workspace_root()
     if ws_root_path is None:
         print_workspace_error()
