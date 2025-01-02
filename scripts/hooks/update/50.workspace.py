@@ -48,7 +48,7 @@ def update(**_) -> bool:
         try:
             repo = git.Repo(path, search_parent_directories=True)
             relative_path = path.replace(f"{ws_src_path}/", "")
-            print_header(
+            print_subheader(
                 f"Updating {relative_path} {Colors.LPURPLE}({repo.head.ref.name})"
             )
             return launch_subprocess(["git", "pull"], cwd=path).returncode == 0
