@@ -62,6 +62,7 @@ All commands support autocompletion and have a `--help` option listing available
 | cd PACKAGE | Go to the directory of the given package. |
 | clean | Clean all (or the passed) packages. |
 | cross_compile | Cross compiles a package for a given target architecture using the `--platform` argument. |
+| discovery | Exports a discovery server xml for the selected robot. |
 | init | Initializes the current directory as workspace root. Has to be run once per workspace. |
 | status | Prints any changes in the git repositories in the workspace. |
 | test | Builds and runs the tests for all (or the passed) packages. |

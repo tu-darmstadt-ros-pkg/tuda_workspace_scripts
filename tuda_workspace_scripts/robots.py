@@ -71,12 +71,27 @@ class RemotePC:
                 return cmd.render_command(base_vars)
 
         raise ValueError(f"Command {command_name} not found in remote PC {self.name}")
+    
+
+class DiscoveryServer:
+    def __init__(self, address: str, port: int, guid_prefix: str):
+        self.address = address
+        self.port = port
+        self.guid_prefix = guid_prefix
+
+    def get_ros_discovery_server_address(self):
+        return f"{self.address}:{self.port}"
+
+    def get_ros_discovery_server_id(self):
+        # 3rd place of the guid_prefix encodes the server id
+        return int(self.guid_prefix.split[2], 16)
 
 
 class Robot:
-    def __init__(self, name: str, remote_pcs: dict[str, RemotePC]):
+    def __init__(self, name: str, remote_pcs: dict[str, RemotePC], discovery_servers: dict[str, DiscoveryServer]):
         self.name = name
         self.remote_pcs = remote_pcs
+        self.discovery_servers = discovery_servers
 
     def _render_shell_command(self, pc: RemotePC, command: RenderedCommand) -> str:
         if command.delegate_to == "localhost" or command.delegate_to == "127.0.0.1":
@@ -157,6 +172,20 @@ def _load_pc_from_yaml(
         pc_name, hostname, user, port=port, commands=list(commands.values())
     )
 
+def _load_discovery_server_from_yaml(config: dict[str, Any]) -> DiscoveryServer:
+    if "address" not in config:
+        raise ValueError(f"Address not specified for discovery server {config}")
+    address = config["address"]
+    # Using default port of 11811 if not specified
+    if "port" in config:
+        port = config["port"]
+    else:
+        port = 11811
+    if "guid_prefix" not in config:
+        raise ValueError(f"Discovery server GUID not specified for discovery server {config}")
+    guid_prefix = config["guid_prefix"]
+    # Do optional settings parsing here as well?
+    return DiscoveryServer(address, port, guid_prefix)
 
 def _load_robot_from_yaml(name, config: dict[str, Any]) -> Robot:
     remote_pcs = dict()
@@ -173,7 +202,12 @@ def _load_robot_from_yaml(name, config: dict[str, Any]) -> Robot:
     for pc_name in config["remote_pcs"]:
         pc_config = config["remote_pcs"][pc_name]
         remote_pcs[pc_name] = _load_pc_from_yaml(pc_name, pc_config, shared_commands)
-    return Robot(config["name"] if "name" in config else name, remote_pcs)
+    discovery_servers = []
+    if 'discovery_servers' in config:
+        for server_config in config['discovery_servers']:
+            discovery_servers.append(_load_discovery_server_from_yaml(server_config))
+
+    return Robot(config["name"] if "name" in config else name, remote_pcs, discovery_servers)
 
 
 def _load_robot_config_from_file(path: str) -> dict[str, Robot]:

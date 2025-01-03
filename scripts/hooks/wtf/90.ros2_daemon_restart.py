@@ -10,6 +10,11 @@ def fix():
         try:
             if is_daemon_running(args=[]):
                 print_info("ROS2 daemon is running. Restarting it just to be safe.")
+                # ensure that super client dds settings are kept
+                super_client_xml_path = "/tmp/tuda_wss/super_client.xml"
+                if os.path.exists(super_client_xml_path):
+                    print_info("Super Client config found. Restarting client with its dds settings.")
+                    os.environ["FASTRTPS_DEFAULT_PROFILES_FILE"] = super_client_xml_path
                 if not shutdown_daemon(args=[], timeout=10):
                     print_error("Failed to shutdown ROS2 daemon")
                     return False
