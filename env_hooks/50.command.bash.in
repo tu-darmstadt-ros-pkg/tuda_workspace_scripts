@@ -1,6 +1,11 @@
 #!/bin/bash
 
-export TUDA_WSS_COMPLETIONS=()
+if [ -z "${TUDA_WSS_COMPLETIONS+x}" ]; then
+  # This is the only variable, we do not wish to overwrite if this is a source
+  # workspace hook overlaying a debian package
+  export TUDA_WSS_COMPLETIONS=()
+fi
+
 export TUDA_WSS_BASE_SCRIPTS=@CMAKE_INSTALL_PREFIX@/share/@PROJECT_NAME@/scripts
 
 add_tuda_wss_completion() {
@@ -10,7 +15,7 @@ add_tuda_wss_completion() {
     echo "Example: add_tuda_wss_completion command _command_complete"
     return
   fi
-  TUDA_WSS_COMPLETIONS+=("$1 $2")
+  TUDA_WSS_COMPLETIONS=("$1 $2" "${TUDA_WSS_COMPLETIONS[@]}")
 }
 
 # @param directory: Directory from which to search the workspace root.
@@ -45,6 +50,12 @@ _tuda_wss_get_workspace_root() {
   return 1
 }
 
+_tuda_wss_print_debug() {
+  if [ "$TUDA_WSS_DEBUG" = "1" ]; then
+    echo "TUDA_WSS_DEBUG: $*"
+  fi
+}
+
 tuda_wss() {
   local command
   command="$1"
@@ -56,19 +67,25 @@ tuda_wss() {
   fi
 
   for dir in ${TUDA_WSS_SCRIPTS//:/ }; do
+    _tuda_wss_print_debug "Looking for $command in $dir"
     if [ -x "$dir/${command}.sh" ]; then
+      _tuda_wss_print_debug "Executing $dir/${command}.sh $@"
       $dir/${command}.sh "$@"
       return $?
     elif [ -x "$dir/${command}.bash" ]; then
+      _tuda_wss_print_debug "Executing $dir/${command}.bash $@"
       $dir/${command}.bash "$@"
       return $?
     elif [ -x "$dir/${command}.py" ]; then
+      _tuda_wss_print_debug "Executing $dir/${command}.py $@"
       $dir/${command}.py "$@"
       return $?
     elif [ -r "$dir/${command}.sh" ]; then
+      _tuda_wss_print_debug "Sourcing $dir/${command}.sh $@"
       source $dir/${command}.sh "$@"
       return 0
     elif [ -r "$dir/${command}.bash" ]; then
+      _tuda_wss_print_debug "Sourcing $dir/${command}.bash $@"
       source $dir/${command}.bash "$@"
       return 0
     fi

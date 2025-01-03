@@ -35,11 +35,15 @@ class Style:
 
 
 def print_color(color, message, file=stdout):
-    print(f"{color}{message}{Colors.RESET}")
+    print(f"{color}{message}{Colors.RESET}", file=file)
 
 
 def print_header(message, file=stdout):
     print_color(Colors.LBLUE, f">>> {message}", file)
+
+
+def print_subheader(message, file=stdout):
+    print_color(Colors.CYAN, f"=== {message}", file)
 
 
 def print_info(message, file=stdout):
