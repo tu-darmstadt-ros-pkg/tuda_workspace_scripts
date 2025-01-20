@@ -4,10 +4,11 @@ import argparse
 import argcomplete
 from tuda_workspace_scripts.print import *
 from tuda_workspace_scripts.scripts import get_hooks_for_command
+from tuda_workspace_scripts.workspace import get_workspace_root
 import importlib
 import subprocess
 from os.path import basename
-from os import environ
+import os
 
 
 def load_method_from_file(file_path: str, method_name: str):
@@ -28,6 +29,8 @@ def main(
     if default_yes:
         args.append("-y")
 
+    workspace_root = get_workspace_root()
+    os.chdir(workspace_root)
     success = True
     for script in hooks:
         if verbose:
@@ -36,10 +39,10 @@ def main(
             update = load_method_from_file(script, "update")
             success &= update(no_sudo=no_sudo, default_yes=default_yes)
         elif script.endswith(".bash"):
-            proc = subprocess.run(["bash", script] + args)
+            proc = subprocess.run(["bash", script] + args, cwd=workspace_root)
             success &= proc.returncode == 0
         elif script.endswith(".sh"):
-            proc = subprocess.run(["sh", script] + args)
+            proc = subprocess.run(["sh", script] + args, cwd=workspace_root)
             success &= proc.returncode == 0
         else:
             print_error(f"Unknown file type for hook: {script}")
@@ -74,7 +77,7 @@ if __name__ == "__main__":
         )
         argcomplete.autocomplete(parser)
         args = parser.parse_args()
-        verbose = args.verbose or environ.get("TUDA_WSS_DEBUG") == "1"
+        verbose = args.verbose or os.environ.get("TUDA_WSS_DEBUG") == "1"
         result = main(
             no_sudo=args.no_sudo, default_yes=args.default_yes, verbose=verbose
         )
