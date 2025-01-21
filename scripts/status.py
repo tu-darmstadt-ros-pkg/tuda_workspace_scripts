@@ -99,10 +99,10 @@ def print_changes(path):
                 )
         if len(repo.untracked_files) < 10:
             for file in repo.untracked_files:
-                print_color(Colors.DGRAY, "  Untracked: {}".format(file))
+                print_color(Colors.LGRAY, "  Untracked: {}".format(file))
         else:
             print_color(
-                Colors.DGRAY, "  {} untracked files.".format(len(repo.untracked_files))
+                Colors.LGRAY, "  {} untracked files.".format(len(repo.untracked_files))
             )
         print("")
     elif repo.is_dirty():
