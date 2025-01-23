@@ -83,7 +83,7 @@ if __name__ == "__main__":
             package = find_package_containing(os.getcwd())
             packages = [package] if package else []
         if len(packages) == 0:
-            print_error("No package found in the current directory!")
+            print_error("No package found in the current directory or containing the current directory!")
             exit(1)
 
     if args.clean and not clean_packages(workspace_root, packages, force=args.yes):

@@ -65,14 +65,14 @@ def find_package_containing(path, identification_extensions=None):
     """
     if identification_extensions is None:
         identification_extensions = get_package_identification_extensions()
-    while path:
+    while path is not None and path != "/":
         try:
             result = identify(identification_extensions, path)
             if result:
                 return result.name
         except IgnoreLocationException:
             pass
-        path = os.path.dirname(path)
+        path = os.path.realpath(os.path.dirname(path))
     return None
 
 
