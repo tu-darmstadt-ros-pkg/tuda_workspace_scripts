@@ -10,8 +10,11 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>ament_cmake_python</buildtool_depend>
 
+  <depend>ament_index_python</depend>
   <depend>python3-git</depend>
+  <depend>python3-jinja2</depend>
   <depend>python3-libtmux</depend>
+  <depend>python3-yaml</depend>
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
 
