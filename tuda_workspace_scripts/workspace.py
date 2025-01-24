@@ -1,4 +1,4 @@
-#!/usr/bin/env python33
+#!/usr/bin/env python3
 try:
     from colcon_core.plugin_system import get_package_identification_extensions
 except ImportError:
@@ -9,6 +9,7 @@ import os
 
 def get_workspace_root(directory=None) -> str | None:
     """
+    The workspace root is the directory containing the src, install and build directories.
     :param directory: Directory from which to search the workspace root. If None will try to find from current and if that fails from the COLCON_PREFIX_PATH
     :return: The path to the workspace root or None if no workspace found.
     """
