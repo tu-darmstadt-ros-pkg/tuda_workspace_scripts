@@ -15,4 +15,4 @@ if __name__ == "__main__":
     if path is None or realpath(path).startswith(realpath(workspace_root)):
         path = get_package_path(sys.argv[1])
 
-    print(path or None)
+    print(path or "")
