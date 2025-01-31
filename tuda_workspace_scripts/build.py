@@ -26,14 +26,14 @@ def build_packages(
     build_tests: bool = False,
     mixin: list[str] = None,
     verbose: bool = False,
-    build_base: str | None = None,
-    install_base: str | None = None,
+    build_base: str = "build",
+    install_base: str = "install",
 ) -> int:
     os.chdir(workspace_root)
     arguments = []
-    if build_base is not None:
+    if build_base != "build":
         arguments += ["--build-base", build_base]
-    if install_base is not None:
+    if install_base != "install":
         arguments += ["--install-base", install_base]
     if colcon_override_check is not None and any(packages):
         arguments += ["--allow-overriding"] + packages
@@ -88,17 +88,23 @@ def clean_logs(workspace_root, packages=None, force=False):
     os.chdir(original_path)
 
 
-def clean_packages(workspace_root, packages, force=False) -> bool:
+def clean_packages(
+    workspace_root,
+    packages,
+    force=False,
+    build_base: str = "build",
+    install_base: str = "install",
+) -> bool:
     original_path = os.getcwd()
     os.chdir(workspace_root)
     try:
         print("I will delete:")
         if any(packages):
-            print(f'  {os.getcwd()}/build/{{{",".join(packages)}}}')
-            print(f'  {os.getcwd()}/install/{{{",".join(packages)}}}')
+            print(f'  {os.getcwd()}/{build_base}/{{{",".join(packages)}}}')
+            print(f'  {os.getcwd()}/{install_base}/{{{",".join(packages)}}}')
         else:
-            print(f"  {os.getcwd()}/build")
-            print(f"  {os.getcwd()}/install")
+            print(f"  {os.getcwd()}/{build_base}")
+            print(f"  {os.getcwd()}/{install_base}")
             print(f"  {os.getcwd()}/log")
 
         if not force and not confirm("Continue?"):
@@ -107,14 +113,14 @@ def clean_packages(workspace_root, packages, force=False) -> bool:
 
         if any(packages):
             for package in packages:
-                shutil.rmtree(f"build/{package}", ignore_errors=True)
-                shutil.rmtree(f"install/{package}", ignore_errors=True)
+                shutil.rmtree(f"{build_base}/{package}", ignore_errors=True)
+                shutil.rmtree(f"{install_base}/{package}", ignore_errors=True)
             ament_prefix_path = get_ament_prefix_path_without_packages(packages)
             cmake_prefix_path = get_cmake_prefix_path_without_packages(packages)
             print_info(f">>> {len(packages)} package cleaned.")
         else:
-            shutil.rmtree("build", ignore_errors=True)
-            shutil.rmtree("install", ignore_errors=True)
+            shutil.rmtree(build_base, ignore_errors=True)
+            shutil.rmtree(install_base, ignore_errors=True)
             shutil.rmtree("log", ignore_errors=True)
             ament_prefix_path = get_ament_prefix_path_without_workspace(workspace_root)
             cmake_prefix_path = get_cmake_prefix_path_without_workspace(workspace_root)
