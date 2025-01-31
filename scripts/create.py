@@ -16,7 +16,7 @@ try:
     import copier
 except ImportError:
     print(
-        "Copier is required! Install using 'pip3 install copier --break-system-packages'"
+        "Copier is required! Install using 'pip3 install copier --user --break-system-packages'"
     )
     raise
 
@@ -144,7 +144,7 @@ def parseArguments() -> argparse.Namespace:
         help="CI type",
     )
     parser.add_argument(
-        "--add_pre_commit",
+        "--add-pre-commit",
         action="store_true",
         default=None,
         help="Add pre-commit hook?",
