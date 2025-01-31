@@ -9,15 +9,15 @@ from ament_index_python.packages import get_package_share_directory
 try:
     import git
 except ImportError:
-    print(
-        "GitPython is required! Install using 'pip3 install --user gitpython' or 'apt install python3-git'"
-    )
+    print("GitPython is required! Install using 'apt install python3-git'")
     raise
 
 try:
     import copier
 except ImportError:
-    print("GitPython is required! Install using 'pip3 install --user copier'")
+    print(
+        "Copier is required! Install using 'pip3 install copier --break-system-packages'"
+    )
     raise
 
 
@@ -79,28 +79,16 @@ def parseArguments() -> argparse.Namespace:
         "--is-component", action="store_true", default=None, help="Make it a component?"
     )
     parser.add_argument(
-        "--no-is-component", dest="is-component", default=None, action="store_false"
-    )
-    parser.add_argument(
         "--is-lifecycle",
         action="store_true",
         default=None,
         help="Make it a lifecycle node?",
     )
     parser.add_argument(
-        "--no-is-lifecycle", dest="is-lifecycle", default=None, action="store_false"
-    )
-    parser.add_argument(
         "--has-launch-file",
         action="store_true",
         default=None,
         help="Add a launch file?",
-    )
-    parser.add_argument(
-        "--no-has-launch-file",
-        dest="has-launch-file",
-        default=None,
-        action="store_false",
     )
     parser.add_argument(
         "--launch-file-type",
@@ -112,19 +100,10 @@ def parseArguments() -> argparse.Namespace:
         "--has-params", action="store_true", default=None, help="Add parameter loading"
     )
     parser.add_argument(
-        "--no-has-params", dest="has-params", default=None, action="store_false"
-    )
-    parser.add_argument(
         "--has-subscriber", action="store_true", default=None, help="Add a subscriber?"
     )
     parser.add_argument(
-        "--no-has-subscriber", dest="has-subscriber", default=None, action="store_false"
-    )
-    parser.add_argument(
         "--has-publisher", action="store_true", default=None, help="Add a publisher?"
-    )
-    parser.add_argument(
-        "--no-has-publisher", dest="has-publisher", default=None, action="store_false"
     )
     parser.add_argument(
         "--has-service-server",
@@ -133,37 +112,19 @@ def parseArguments() -> argparse.Namespace:
         help="Add a service server?",
     )
     parser.add_argument(
-        "--no-has-service-server",
-        dest="has-service-server",
-        default=None,
-        action="store_false",
-    )
-    parser.add_argument(
         "--has-action-server",
         action="store_true",
         default=None,
         help="Add an action server?",
     )
     parser.add_argument(
-        "--no-has-action-server",
-        dest="has-action-server",
-        default=None,
-        action="store_false",
-    )
-    parser.add_argument(
         "--has-timer", action="store_true", default=None, help="Add a timer callback?"
-    )
-    parser.add_argument(
-        "--no-has-timer", dest="has-timer", default=None, action="store_false"
     )
     parser.add_argument(
         "--auto-shutdown",
         action="store_true",
         default=None,
         help="Automatically shutdown the node after launch (useful in CI/CD)?",
-    )
-    parser.add_argument(
-        "--no-auto-shutdown", dest="auto-shutdown", default=None, action="store_false"
     )
     parser.add_argument(
         "--interface-types",
@@ -188,7 +149,6 @@ def parseArguments() -> argparse.Namespace:
         default=None,
         help="Add pre-commit hook?",
     )
-    # parser.add_argument("--has-docker-ros", action="store_true", default=None, help="Add the docker-ros CI integration?")
 
     argcomplete.autocomplete(parser)
     return parser.parse_args()
@@ -205,7 +165,8 @@ def add_git_config_info(answers):
 
 
 def add_ros_distro(answers):
-    answers["ros_distro"] = os.environ.get("ROS_DISTRO", "jazzy")
+    if os.environ.get("ROS_DISTRO"):
+        answers["ros_distro"] = os.environ.get("ROS_DISTRO")
 
 
 def create(template_pkg_name: str, template_url: str):
