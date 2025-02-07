@@ -30,12 +30,13 @@ def build_packages(
     install_base: str | None = None,
 ) -> int:
     os.chdir(workspace_root)
+    packages = packages or []
     arguments = []
     if build_base is not None:
         arguments += ["--build-base", build_base]
     if install_base is not None:
         arguments += ["--install-base", install_base]
-    if colcon_override_check is not None and any(packages):
+    if colcon_override_check is not None and len(packages) > 0:
         arguments += ["--allow-overriding"] + packages
     if continue_on_error:
         arguments += ["--continue-on-error"]
@@ -52,7 +53,7 @@ def build_packages(
     if mixin and len(mixin) > 0:
         arguments += ["--mixin"] + mixin
 
-    if any(packages):
+    if len(packages) > 0:
         arguments += ["--packages-up-to"] if not no_deps else ["--packages-select"]
         arguments += packages
 
