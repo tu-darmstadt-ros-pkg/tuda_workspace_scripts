@@ -136,7 +136,7 @@ if __name__ == "__main__":
             returncode |= command.returncode
     else:
         command = subprocess.run(
-            "colcon test-result --verbose --test-result-base build",
+            f"colcon test-result --verbose --test-result-base {build_folder}",
             stdout=sys.stdout,
             stderr=sys.stderr,
             shell=True,
