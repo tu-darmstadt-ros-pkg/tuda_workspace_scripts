@@ -19,7 +19,7 @@ if [ $_NO_SUDO -eq 1 ]; then
   echo "Skipped because --no-sudo option was specified."
 else
   sudo apt-get update
-  AVAILABLE_SYSTEM_PACKAGE_UPDATES=$(apt-get -qq -s upgrade | grep Inst | cut -d ' ' -f 2 | grep "^[[:blank:]]*ros-")
+  AVAILABLE_SYSTEM_PACKAGE_UPDATES=$(apt-get -qq -s --with-new-pkgs upgrade | grep Inst | cut -d ' ' -f 2 | grep "^[[:blank:]]*ros-")
   if [ -n "${AVAILABLE_SYSTEM_PACKAGE_UPDATES}" ]; then
     sudo apt install ${_DEFAULT_YES} --only-upgrade ${AVAILABLE_SYSTEM_PACKAGE_UPDATES}
   else
