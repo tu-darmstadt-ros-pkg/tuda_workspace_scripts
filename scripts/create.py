@@ -216,5 +216,5 @@ def create(template_pkg_name: str, template_url: str):
 
 if __name__ == "__main__":
     template_pkg_name = "ros2_pkg_create"
-    template_url = "https://github.com/Joschi3/ros2-pkg-create"
+    template_url = "https://github.com/tu-darmstadt-ros-pkg/ros2-pkg-create.git"
     create(template_pkg_name, template_url)
