@@ -38,8 +38,8 @@ def parseArguments() -> argparse.Namespace:
         "--destination",
         "-d",
         type=str,
-        default=None,
-        help="Destination directory (default: <workspace_root>/src/)",
+        default=os.getcwd(),
+        help="Destination directory (default: current working directory)",
     )
     parser.add_argument(
         "--defaults", action="store_true", help="Use defaults for all options"
@@ -175,9 +175,7 @@ def create(template_pkg_name: str, template_url: str):
     args = parseArguments()
     workspace_src = os.path.join(get_workspace_root(), "src")
 
-    # Adapt destination path
-    if args.destination is None:
-        args.destination = workspace_src
+    # Adapt relative destination path
     if not os.path.isabs(args.destination):
         args.destination = os.path.join(workspace_src, args.destination)
     print(f"Destination: {args.destination}")
