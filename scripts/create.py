@@ -12,14 +12,6 @@ except ImportError:
     print("GitPython is required! Install using 'apt install python3-git'")
     raise
 
-try:
-    import copier
-except ImportError:
-    print(
-        "Copier is required! Install using 'pip3 install copier --user --break-system-packages'"
-    )
-    raise
-
 
 def parseArguments() -> argparse.Namespace:
 
@@ -169,6 +161,31 @@ def add_ros_distro(answers):
         answers["ros_distro"] = os.environ.get("ROS_DISTRO")
 
 
+def create_from_template(template, destination, answers, defaults):
+    try:
+        import copier
+    except ImportError:
+        print(
+            "Copier is required! Install using 'pip3 install copier --user --break-system-packages'"
+        )
+        raise
+
+    # run copier
+    try:
+        copier.run_copy(
+            template,
+            destination,
+            data=answers,
+            defaults=defaults,
+            unsafe=True,
+            vcs_ref="HEAD",
+        )
+
+    except copier.CopierAnswersInterrupt:
+        print("Aborted")
+        return
+
+
 def create(template_pkg_name: str, template_url: str):
 
     # pass specified arguments as data to copier
@@ -195,21 +212,8 @@ def create(template_pkg_name: str, template_url: str):
             f"Package '{template_pkg_name}' not found locally. Using remote template."
         )
         template_location = template_url
-
-    # run copier
-    try:
-        copier.run_copy(
-            template_location,
-            args.destination,
-            data=answers,
-            defaults=args.defaults,
-            unsafe=True,
-            vcs_ref="HEAD",
-        )
-
-    except copier.CopierAnswersInterrupt:
-        print("Aborted")
-        return
+        
+    create_from_template(template_location, args.destination, answers, args.defaults)
 
 
 if __name__ == "__main__":
