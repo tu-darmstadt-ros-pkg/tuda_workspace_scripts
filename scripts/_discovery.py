@@ -7,10 +7,9 @@ from tuda_workspace_scripts.robots import *
 from tuda_workspace_scripts.discovery import *
 from tuda_workspace_scripts.print import print_warn
 
-class RouterChoicesCompleter:
+class RobotChoicesCompleter:
     def __call__(self, prefix, parsed_args, **kwargs):
         complete_args = [var for var in load_robots().keys()]
-        # allowing a local server with ID 0 and default port
         complete_args.append("off")
         chosen_args = getattr(parsed_args, "connections", [])
 
@@ -31,25 +30,25 @@ def main():
     choices = list(robots.keys())
     choices.extend(["off","all"])    
     first_arg = parser.add_argument(
-        "connections",
+        "robots",
         nargs="+",
         choices = choices,
         help="Select robots which should be discovered by your machine. Choose 'off' to limit discovery to the localhost or 'all' to discover all known robots."
     )
-    first_arg.completer = RouterChoicesCompleter()
+    first_arg.completer = RobotChoicesCompleter()
     argcomplete.autocomplete(parser)
 
     args = parser.parse_args()
-    connections = args.connections
+    selected_robots = args.robots
 
-    if "off" in connections and len(connections) > 1:
+    if "off" in selected_robots and len(selected_robots) > 1:
         parser.error("'off' cannot be combined with other robots.")
     
     # Disallow "all" with any other options
-    if "all" in connections and len(connections) > 1:
+    if "all" in selected_robots and len(selected_robots) > 1:
         parser.error("'all' cannot be combined with other robots.")
 
-    create_discovery_config(connections)
+    create_discovery_config(selected_robots)
 
     print_warn("Warning: The settings are applied to all terminals and new started ros nodes. Restart old nodes if necessary.")
 

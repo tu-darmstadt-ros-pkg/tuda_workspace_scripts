@@ -171,15 +171,9 @@ def _load_pc_from_yaml(
 def _load_zenoh_router_from_yaml(config: dict[str, Any]) -> ZenohRouter:
     if "address" not in config:
         raise ValueError(f"Address not specified for router {config}")
-    address = config["address"]
-    if "port" in config:
-        port = config["port"]
-    else:
-        port = 7447 # default port
-    if "protocol" in config:
-        protocol = config["protocol"]
-    else:
-        protocol = "tcp" # default protocol for zenoh
+    address = config["address"]    
+    port = config.get("port", 7447)
+    protocol = config.get("protocol", "tcp")
     return ZenohRouter(address, port, protocol)
 
 
