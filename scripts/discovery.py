@@ -5,7 +5,6 @@ import argcomplete
 from tuda_workspace_scripts.print import *
 from tuda_workspace_scripts.robots import *
 from tuda_workspace_scripts.discovery import *
-from tuda_workspace_scripts.print import print_warn
 
 class RobotChoicesCompleter:
     def __call__(self, prefix, parsed_args, **kwargs):
