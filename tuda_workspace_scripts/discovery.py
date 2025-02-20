@@ -2,13 +2,16 @@ from robots import ZenohRouter, load_robots
 from tuda_workspace_scripts import print_warn
 import os
 import yaml
+from .workspace import get_workspace_root
 
-CONFIG_DIR = os.path.expanduser("~/.config")
+ws_root = get_workspace_root()
+if not ws_root:
+  raise RuntimeError("Workspace root not found")
+CONFIG_DIR = os.path.join(ws_root,".config")
 RMW = os.getenv("RMW_IMPLEMENTATION", None)
 ZENOH_ROUTER_CONFIG_PATH = os.path.join(CONFIG_DIR, "zenoh_router_config.yaml")
 
 def create_discovery_config(connections: list[str]):
-
   if not os.path.exists(CONFIG_DIR):
     os.mkdir(CONFIG_DIR)
 
