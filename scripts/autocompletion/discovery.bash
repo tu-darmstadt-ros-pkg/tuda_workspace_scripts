@@ -19,7 +19,7 @@ function _tudawss_discovery_complete() {
                 _ARGCOMPLETE_COMP_WORDBREAKS="$COMP_WORDBREAKS" \
                 _ARGCOMPLETE=1 \
                 _ARGCOMPLETE_SUPPRESS_SPACE=$SUPPRESS_SPACE \
-                $TUDA_WSS_BASE_SCRIPTS/_discovery.py 8>&1 9>&2 > /dev/null 2>&1) )
+                $TUDA_WSS_BASE_SCRIPTS/discovery.py 8>&1 9>&2 > /dev/null 2>&1) )
   if [[ $? != 0 ]]; then
     unset COMPREPLY
   elif [[ $SUPPRESS_SPACE == 1 ]] && [[ "$COMPREPLY" =~ [=/:]$ ]]; then
