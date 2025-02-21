@@ -5,6 +5,7 @@ from tuda_workspace_scripts.workspace import get_workspace_root
 
 try:
     import git
+    from git.exc import GitCommandError
 except ImportError:
     print(
         "GitPython is required! Install using 'pip3 install --user gitpython' or 'apt install python3-git'"
@@ -13,14 +14,20 @@ except ImportError:
 import os
 
 
-def print_changes(path):
+def print_changes(path, root_path):
     try:
-        repo = git.Repo(path, search_parent_directories=True)
+        repo = git.Repo(path, search_parent_directories=False)
     except git.exc.InvalidGitRepositoryError:
         print_error("Failed to obtain git info for: {}".format(path))
         return
-    stash = repo.git.stash("list")
-    changes = repo.index.diff(None)
+    try:
+        stash = repo.git.stash("list")
+        changes = repo.index.diff(None)
+    except GitCommandError as e:
+        if "not a git repository" in e.stderr:
+            return
+        print_error("Failed to obtain changes for {}: {}".format(path, e))
+        return
     try:
         # Need to reverse using R=True, otherwise we get the diff from tree to HEAD meaning deleted files are added and vice versa
         changes += repo.index.diff("HEAD", R=True)
@@ -55,7 +62,13 @@ def print_changes(path):
         or any(local_branches)
         or any(changes)
     ):
-        print_info(f"{path} {Colors.LPURPLE}({repo.head.ref.name})")
+        if not repo.head.is_valid():
+            branch_name = "unknown"
+        elif repo.head.is_detached:
+            branch_name = f"detached at {repo.head.commit}"
+        else:
+            branch_name = repo.head.ref.name
+        print_info(f"{os.path.relpath(path, root_path)} {Colors.LPURPLE}({branch_name})")
         if len(repo.branches) == 0:
             print_color(Colors.LRED, "  No branches configured upstream.")
         for branch in uncommited_commits:
@@ -116,12 +129,12 @@ def main() -> int:
     if ws_root_path is None:
         print_workspace_error()
         return 1
-    os.chdir(os.path.join(ws_root_path, "src"))
+    
     if os.path.isdir(os.path.join(ws_root_path, ".git")):
         print_color(Colors.GREEN, "Looking for changes in {}...".format(ws_root_path))
-        print_changes(ws_root_path)
+        print_changes(ws_root_path, None)
 
-    def scan_workspace(path):
+    def scan_workspace(path, root_path):
         if not os.path.isdir(path):
             return
         try:
@@ -130,14 +143,14 @@ def main() -> int:
             print_error("Error while scanning '{}'!\nMessage: {}".format(path, str(e)))
             return
         if ".git" in subdirs:
-            print_changes(path)
+            print_changes(path, root_path)
 
         for subdir in sorted(subdirs):
-            scan_workspace(os.path.join(path, subdir))
+            scan_workspace(os.path.join(path, subdir), root_path)
 
     ws_src_path = os.path.join(ws_root_path, "src")
     print_color(Colors.GREEN, "Looking for changes in {}...".format(ws_src_path))
-    scan_workspace(ws_src_path)
+    scan_workspace(ws_src_path, ws_src_path)
     return 0
 
 
