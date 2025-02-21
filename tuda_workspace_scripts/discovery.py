@@ -1,6 +1,6 @@
 import os
 import yaml
-from .print import confirm, print_warn
+from .print import print_info, print_warn
 from .robots import Robot, ZenohRouter, load_robots
 from .workspace import get_workspace_root
 
@@ -9,6 +9,8 @@ if not ws_root:
     raise RuntimeError("Workspace root not found")
 RMW: str | None = os.getenv("RMW_IMPLEMENTATION", None)
 ZENOH_ROUTER_CONFIG_PATH: str | None = os.getenv("ZENOH_ROUTER_CONFIG_URI", None)
+
+MARKER = "# This file is managed by tuda_workspace_scripts. Changes may be overwritten."
 
 
 def create_discovery_config(selected_robots: list[str], custom_addresses: list[str]):
@@ -55,12 +57,21 @@ def create_zenoh_router_config_yaml(
     for router in config["connect"]["endpoints"]:
         print(" -", router)
 
-    if os.path.isfile(ZENOH_ROUTER_CONFIG_PATH) and not confirm(
-        "I will overwrite the existing zenoh router config. Continue?"
-    ):
-        return
+    if os.path.isfile(ZENOH_ROUTER_CONFIG_PATH):
+        # Backup existing files if not ours
+        with open(ZENOH_ROUTER_CONFIG_PATH, "r") as file:
+            if file.readline().strip() != MARKER:
+                i = 0
+                while os.path.isfile(ZENOH_ROUTER_CONFIG_PATH + f".backup{i}"):
+                    i += 1
+                print_warn(
+                    f"Existing zenoh router config found at {ZENOH_ROUTER_CONFIG_PATH}. Backing up as {ZENOH_ROUTER_CONFIG_PATH}.backup{i}."
+                )
+                os.rename(ZENOH_ROUTER_CONFIG_PATH, f"{ZENOH_ROUTER_CONFIG_PATH}.backup{i}")
     with open(ZENOH_ROUTER_CONFIG_PATH, "w") as file:
+        file.write(f"{MARKER}\n")
         yaml.dump(config, file, default_flow_style=False)
+    print_info(f"Zenoh router config updated.")
 
 
 def _create_zenoh_router_config_yaml(routers):
