@@ -71,7 +71,8 @@ class RemotePC:
                 return cmd.render_command(base_vars)
 
         raise ValueError(f"Command {command_name} not found in remote PC {self.name}")
-    
+
+
 class ZenohRouter:
     def __init__(self, address: str, port: int, protocol: str):
         self.address = address
@@ -79,11 +80,16 @@ class ZenohRouter:
         self.protocol = protocol
 
     def get_zenoh_router_address(self):
-        return f'{self.protocol}/{self.address}:{self.port}'
+        return f"{self.protocol}/{self.address}:{self.port}"
 
-    
+
 class Robot:
-    def __init__(self, name: str, remote_pcs: dict[str, RemotePC], zenoh_routers: list[ZenohRouter]):
+    def __init__(
+        self,
+        name: str,
+        remote_pcs: dict[str, RemotePC],
+        zenoh_routers: list[ZenohRouter],
+    ):
         self.name = name
         self.remote_pcs = remote_pcs
         self.zenoh_routers = zenoh_routers
@@ -132,7 +138,9 @@ class Robot:
 DEFAULT_COMMANDS = [
     Command("ssh", "ssh -p {{port}} {{user}}@{{hostname}}", delegate_to="localhost"),
     Command(
-        "ssh-copy-id", "ssh-copy-id -p {{port}} {{user}}@{{hostname}}", delegate_to="localhost"
+        "ssh-copy-id",
+        "ssh-copy-id -p {{port}} {{user}}@{{hostname}}",
+        delegate_to="localhost",
     ),
     Command("reboot", "sudo reboot now"),
     Command("shutdown", "sudo shutdown now"),
@@ -171,7 +179,7 @@ def _load_pc_from_yaml(
 def _load_zenoh_router_from_yaml(config: dict[str, Any]) -> ZenohRouter:
     if "address" not in config:
         raise ValueError(f"Address not specified for router {config}")
-    address = config["address"]    
+    address = config["address"]
     port = config.get("port", 7447)
     protocol = config.get("protocol", "tcp")
     return ZenohRouter(address, port, protocol)
@@ -193,10 +201,12 @@ def _load_robot_from_yaml(name, config: dict[str, Any]) -> Robot:
         pc_config = config["remote_pcs"][pc_name]
         remote_pcs[pc_name] = _load_pc_from_yaml(pc_name, pc_config, shared_commands)
     zenoh_routers = []
-    if 'zenoh_routers' in config:
+    if "zenoh_routers" in config:
         for zenoh_router_config in config["zenoh_routers"]:
             zenoh_routers.append(_load_zenoh_router_from_yaml(zenoh_router_config))
-    return Robot(config["name"] if "name" in config else name, remote_pcs, zenoh_routers)
+    return Robot(
+        config["name"] if "name" in config else name, remote_pcs, zenoh_routers
+    )
 
 
 def _load_robot_config_from_file(path: str) -> dict[str, Robot]:
