@@ -25,7 +25,18 @@ class RobotChoicesCompleter:
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="discovery", description="Allows to discover other ROS2 machines"
+        prog="discovery", description="""
+Enables the discovery of other ROS2 machines.
+
+You can also specify custom addresses to connect to.
+The format depends on the used middleware.
+
+Zenoh
+=====
+IP_OR_HOSTNAME[:PORT][/PROTOCOL]
+Port defaults to 7447 and protocol to tcp.
+Examples: hostname:8443 10.0.10.3:8231/tcp
+""", formatter_class=argparse.RawDescriptionHelpFormatter
     )
     robots = load_robots()
 
@@ -35,7 +46,8 @@ def main():
         "robots",
         nargs="*",
         choices=choices,
-        help="Select robots which should be discovered by your machine. Choose 'off' to limit discovery to the localhost or 'all' to discover all known robots.",
+        help="Select robots which should be discovered by your machine. "
+        "Choose 'off' to limit discovery to the localhost or 'all' to discover all known robots.",
     )
     first_arg.completer = RobotChoicesCompleter()
 
@@ -44,7 +56,7 @@ def main():
         "--address",
         nargs="+",
         type=str,
-        help="Specify one or more custom addresses (e.g., IP or hostname) for discovery.",
+        help="Specify one or more custom addresses for discovery.",
     )
 
     argcomplete.autocomplete(parser)

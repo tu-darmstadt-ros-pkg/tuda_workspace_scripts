@@ -80,7 +80,7 @@ class ZenohRouter:
         self.protocol = protocol
 
     def get_zenoh_router_address(self):
-        return f"{self.protocol}/{self.address}:{self.port}"
+        return f"{self.address}:{self.port}/{self.protocol}"
 
 
 class Robot:

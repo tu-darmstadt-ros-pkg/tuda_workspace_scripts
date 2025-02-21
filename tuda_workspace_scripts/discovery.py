@@ -1,3 +1,4 @@
+import re
 import os
 import yaml
 from .print import print_info, print_warn
@@ -50,7 +51,20 @@ def create_zenoh_router_config_yaml(
                 f"Couldn't find an entry for {name} in robot configs. Please check if your selected robot is available."
             )
 
-    routers.extend(ZenohRouter(address, "7447", "tcp") for address in custom_addresses)
+    for address in custom_addresses:
+        match = re.match(r"([^:/]+)(:\d+)?(/.*)?$", address)
+        if not match:
+            print_warn(
+                f"Invalid address '{address}'! Please use the format 'IP_OR_HOSTNAME[:PORT][/PROTOCOL]'."
+            )
+            continue
+        name = match.group(1)
+        tmp = match.group(2)
+        port = int(tmp[1:]) if tmp and tmp[0] == ":" else 7447
+        tmp = match.group(3)
+        protocol = tmp[1:] if tmp and tmp[0] == "/" else "tcp"
+
+        routers.append(ZenohRouter(name, port, protocol))
 
     config = _create_zenoh_router_config_yaml(routers)
     print("Connecting to routers:")
@@ -67,7 +81,9 @@ def create_zenoh_router_config_yaml(
                 print_warn(
                     f"Existing zenoh router config found at {ZENOH_ROUTER_CONFIG_PATH}. Backing up as {ZENOH_ROUTER_CONFIG_PATH}.backup{i}."
                 )
-                os.rename(ZENOH_ROUTER_CONFIG_PATH, f"{ZENOH_ROUTER_CONFIG_PATH}.backup{i}")
+                os.rename(
+                    ZENOH_ROUTER_CONFIG_PATH, f"{ZENOH_ROUTER_CONFIG_PATH}.backup{i}"
+                )
     with open(ZENOH_ROUTER_CONFIG_PATH, "w") as file:
         file.write(f"{MARKER}\n")
         yaml.dump(config, file, default_flow_style=False)
