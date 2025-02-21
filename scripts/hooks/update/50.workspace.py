@@ -48,12 +48,27 @@ def update(**_) -> bool:
         try:
             repo = git.Repo(path, search_parent_directories=True)
             relative_path = path.replace(f"{ws_src_path}/", "")
+            if not repo.head.is_valid():
+                branch_name = "unknown"
+            elif repo.head.is_detached:
+                branch_name = f"detached at {repo.head.commit}"
+            else:
+                branch_name = repo.head.ref.name
             print_subheader(
-                f"Updating {relative_path} {Colors.LPURPLE}({repo.head.ref.name})"
+                f"Updating {relative_path} {Colors.LPURPLE}({branch_name})"
             )
+            if not repo.head.is_valid():
+                print_warn("Repository has no valid HEAD. Not updating.")
+                return True
+            if repo.head.is_detached:
+                print_info("Repository is in detached HEAD state. Not updating.")
+                return True
             return launch_subprocess(["git", "pull"], cwd=path).returncode == 0
         except git.exc.InvalidGitRepositoryError:
             print_error("Failed to obtain git info for: {}".format(path))
+            return False
+        except Exception as e:
+            print_error("Error while updating '{}':\n{}".format(path, str(e)))
             return False
 
     def update_workspace(path) -> bool:
