@@ -1,21 +1,17 @@
-from robots import Robot, ZenohRouter, load_robots
-from tuda_workspace_scripts import print_warn
 import os
 import yaml
+from .print import confirm, print_warn
+from .robots import Robot, ZenohRouter, load_robots
 from .workspace import get_workspace_root
 
 ws_root = get_workspace_root()
 if not ws_root:
     raise RuntimeError("Workspace root not found")
-CONFIG_DIR = os.path.join(ws_root, ".config")
-RMW = os.getenv("RMW_IMPLEMENTATION", None)
-ZENOH_ROUTER_CONFIG_PATH = os.path.join(CONFIG_DIR, "zenoh_router_config.yaml")
+RMW: str | None = os.getenv("RMW_IMPLEMENTATION", None)
+ZENOH_ROUTER_CONFIG_PATH: str | None = os.getenv("ZENOH_ROUTER_CONFIG_URI", None)
 
 
 def create_discovery_config(selected_robots: list[str], custom_addresses: list[str]):
-    if not os.path.exists(CONFIG_DIR):
-        os.mkdir(CONFIG_DIR)
-
     available_robots = load_robots()
 
     if RMW == "rmw_zenoh_cpp":
@@ -30,7 +26,7 @@ def create_discovery_config(selected_robots: list[str], custom_addresses: list[s
 
 def create_zenoh_router_config_yaml(
     selected_robots: list[str],
-    available_robots: dict[Robot],
+    available_robots: dict[str, Robot],
     custom_addresses: list[str],
 ):
     routers = []
@@ -45,17 +41,12 @@ def create_zenoh_router_config_yaml(
             for _, robot_data in available_robots.items():
                 routers.extend(robot_data.zenoh_routers)
             break
+        elif name in available_robots:
+            routers.extend(available_robots[name].zenoh_routers)
         else:
-            filtered_robots = []
-            for robot_name, robot_data in available_robots.items():
-                if robot_name == name:
-                    filtered_robots.append(robot_data)
-            if len(filtered_robots) == 1:
-                routers.extend(filtered_robots[0].zenoh_routers)
-            else:
-                print_warn(
-                    f"Couldn't find correct entry for {name} in robot configs. Please check if your selected robot is available."
-                )
+            print_warn(
+                f"Couldn't find an entry for {name} in robot configs. Please check if your selected robot is available."
+            )
 
     routers.extend(ZenohRouter(address, "7447", "tcp") for address in custom_addresses)
 
@@ -64,6 +55,10 @@ def create_zenoh_router_config_yaml(
     for router in config["connect"]["endpoints"]:
         print(" -", router)
 
+    if os.path.isfile(ZENOH_ROUTER_CONFIG_PATH) and not confirm(
+        "I will overwrite the existing zenoh router config. Continue?"
+    ):
+        return
     with open(ZENOH_ROUTER_CONFIG_PATH, "w") as file:
         yaml.dump(config, file, default_flow_style=False)
 

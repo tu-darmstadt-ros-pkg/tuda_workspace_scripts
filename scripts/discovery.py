@@ -67,7 +67,7 @@ def main():
     create_discovery_config(selected_robots, custom_addresses)
 
     print_warn(
-        "Warning: The settings are applied to all terminals and new started ros nodes. Restart old nodes if necessary."
+        "Warning: The settings are applied to all terminals and new started ROS nodes. Restart old nodes if necessary."
     )
 
 
