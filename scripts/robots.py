@@ -2,6 +2,7 @@
 # PYTHON_ARGCOMPLETE_OK
 import argparse
 import argcomplete
+import shlex
 from tuda_workspace_scripts.print import *
 from tuda_workspace_scripts.robots import *
 from tuda_workspace_scripts.tmux import launch_tmux
@@ -99,11 +100,18 @@ def main():
         commands = [
             robot.get_shell_command(remote_pc, command_name, {"robot": robot_name})
         ]
-    launch_tmux(
-        commands,
-        use_windows=args.use_windows,
-        keep_open_duration=args.keep_open_duration,
-    )
+
+    # If single command, launch directly replacing the current process
+    # Otherwise, use tmux to split the terminal
+    if len(commands) == 1:
+        args = shlex.split(commands[0])
+        os.execvp(args[0], args)
+    else:
+        launch_tmux(
+            commands,
+            use_windows=args.use_windows,
+            keep_open_duration=args.keep_open_duration,
+        )
 
 
 if __name__ == "__main__":
