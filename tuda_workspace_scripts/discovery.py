@@ -90,6 +90,25 @@ def create_zenoh_router_config_yaml(
     print_info(f"Zenoh router config updated.")
 
 
+def print_discovery_config():
+    if RMW == "rmw_zenoh_cpp":
+        print_zenoh_discovery_config()
+    elif RMW:
+        raise NotImplementedError(f"Discovery is not implemented for RMW {RMW}")
+    else:
+        raise RuntimeError("RMW_IMPLEMENTATION is not set.")
+
+
+def print_zenoh_discovery_config():
+    if os.path.exists(ZENOH_ROUTER_CONFIG_PATH):
+        routers = _get_zenoh_routers_from_yaml(ZENOH_ROUTER_CONFIG_PATH)
+    else:
+        print_warn(f"Configuration file not found: {ZENOH_ROUTER_CONFIG_PATH}")
+    print_info("Connected Zenoh routers:")
+    for router in routers:
+        print_info(f" -{router.get_zenoh_router_address()}")
+
+
 def _create_zenoh_router_config_yaml(routers):
     config = {
         "mode": "router",
@@ -98,3 +117,33 @@ def _create_zenoh_router_config_yaml(routers):
         },
     }
     return config
+
+
+def _get_zenoh_routers_from_yaml(config_path: str) -> list[ZenohRouter]:
+    try:
+        with open(config_path) as file:
+            data = yaml.safe_load(file)
+        if "connect" in data and "endpoints" in data["connect"]:
+            routers = []
+            for endpoint in data["connect"]["endpoints"]:
+                # Parse the endpoint string (format: protocol/address:port)
+                parts = endpoint.split("/")
+                if len(parts) == 2:
+                    protocol = parts[0]
+                    address_port = parts[1].split(":")
+                    if len(address_port) == 2:
+                        address = address_port[0]
+                        try:
+                            port = int(address_port[1])
+                            router = ZenohRouter(address, port, protocol)
+                            routers.append(router)
+                        except ValueError:
+                            print(f"Invalid port number in endpoint: {endpoint}")
+                    else:
+                        print(f"Invalid endpoint format (missing port): {endpoint}")
+                else:
+                    print(f"Invalid endpoint format (missing protocol): {endpoint}")
+            return routers
+    except Exception as e:
+        print(f"Error parsing YAML file: {e}")
+        return []
