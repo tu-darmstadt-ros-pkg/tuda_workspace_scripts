@@ -65,6 +65,11 @@ Examples: hostname:8443 10.0.10.3:8231/tcp
     selected_robots = args.robots
     custom_addresses = args.address or []
 
+    # If no arguments are provided, print the current status
+    if not selected_robots and not custom_addresses:
+        print_discovery_config()
+        return
+
     # Validation logic
     if not selected_robots and not custom_addresses:
         parser.error("You must specify either 'robots' or '--address'.")
