@@ -25,7 +25,8 @@ class RobotChoicesCompleter:
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="discovery", description="""
+        prog="discovery",
+        description="""
 Enables the discovery of other ROS2 machines.
 
 You can also specify custom addresses to connect to.
@@ -36,7 +37,8 @@ Zenoh
 IP_OR_HOSTNAME[:PORT][/PROTOCOL]
 Port defaults to 7447 and protocol to tcp.
 Examples: hostname:8443 10.0.10.3:8231/tcp
-""", formatter_class=argparse.RawDescriptionHelpFormatter
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     robots = load_robots()
 
