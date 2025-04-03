@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import git.exc
 from tuda_workspace_scripts.workspace import get_workspace_root, PackageChoicesCompleter
 
 import argcomplete
