@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import git.exc
 from tuda_workspace_scripts.workspace import get_workspace_root, PackageChoicesCompleter
 
 import argcomplete
@@ -156,6 +157,29 @@ def add_git_config_info(answers):
         answers["user_email_git"] = git_config.get_value("user", "email")
 
 
+def add_git_provider(answers, repo_path="."):
+    try:
+        repo = git.Repo(repo_path, search_parent_directories=True)
+        remotes = repo.remotes
+        if "origin" in remotes:
+            remote_url = remotes["origin"].url
+        elif remotes:
+            # fallback to first remote
+            remote_url = list(remotes)[0].url
+        else:
+            # "No remotes found in repo"
+            return
+
+        if "github.com" in remote_url:
+            answers["git_provider"] = "github"
+        elif "gitlab" in remote_url:
+            answers["git_provider"] = "gitlab"
+    except Exception as e:
+        # error while parsing git config
+        # do not set git_provider
+        pass
+
+
 def add_ros_distro(answers):
     if os.environ.get("ROS_DISTRO"):
         answers["ros_distro"] = os.environ.get("ROS_DISTRO")
@@ -203,6 +227,8 @@ def create(template_pkg_name: str, template_url: str):
     add_git_config_info(answers)
 
     add_ros_distro(answers)
+
+    add_git_provider(answers, args.destination)
 
     # get pkg template location if installed as ros pkg
     try:
