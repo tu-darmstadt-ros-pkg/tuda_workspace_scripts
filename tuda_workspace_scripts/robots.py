@@ -89,10 +89,12 @@ class Robot:
         name: str,
         remote_pcs: dict[str, RemotePC],
         zenoh_routers: list[ZenohRouter],
+        cyclonedds_address: list[str],
     ):
         self.name = name
         self.remote_pcs = remote_pcs
         self.zenoh_routers = zenoh_routers
+        self.cyclonedds_address = cyclonedds_address
 
     def _render_shell_command(self, pc: RemotePC, command: RenderedCommand) -> str:
         if command.delegate_to == "localhost" or command.delegate_to == "127.0.0.1":
@@ -204,8 +206,12 @@ def _load_robot_from_yaml(name, config: dict[str, Any]) -> Robot:
     if "zenoh_routers" in config:
         for zenoh_router_config in config["zenoh_routers"]:
             zenoh_routers.append(_load_zenoh_router_from_yaml(zenoh_router_config))
+    cyclonedds_address = config.get("cyclonedds_address")
     return Robot(
-        config["name"] if "name" in config else name, remote_pcs, zenoh_routers
+        config["name"] if "name" in config else name,
+        remote_pcs,
+        zenoh_routers,
+        cyclonedds_address,
     )
 
 
