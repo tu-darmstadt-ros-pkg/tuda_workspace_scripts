@@ -2,8 +2,6 @@ from ament_index_python.packages import get_package_share_directory
 import re
 import os
 import yaml
-import xml.etree.ElementTree as ET
-from xml.dom import minidom
 from jinja2 import Environment, FileSystemLoader
 from .print import print_info, print_warn
 from .robots import Robot, ZenohRouter, load_robots
@@ -101,6 +99,7 @@ def create_cyclonedds_router_config_xml(
                 os.rename(CYCLONEDDS_URI, f"{CYCLONEDDS_URI}.backup{i}")
 
     with open(CYCLONEDDS_URI, "w", encoding="utf-8") as file:
+        file.write(f"{XML_MARKER}\n")
         file.write(config)
     print_info(f"Cyclone DDS config updated.")
 
