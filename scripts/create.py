@@ -156,6 +156,24 @@ def add_git_config_info(answers):
         answers["user_email_git"] = git_config.get_value("user", "email")
 
 
+def add_git_provider(answers, repo_path="."):
+    try:
+        repo = git.Repo(repo_path, search_parent_directories=True)
+        remotes = repo.remotes
+        providers = ["github", "gitlab"]
+        for remote in remotes:
+            remote_url = remote.url
+            for provider in providers:
+                if provider in remote_url:
+                    answers["git_provider"] = provider
+                    return
+        print("No git provider detected")
+    except Exception as e:
+        # error while parsing git config
+        # do not set git_provider
+        pass
+
+
 def add_ros_distro(answers):
     if os.environ.get("ROS_DISTRO"):
         answers["ros_distro"] = os.environ.get("ROS_DISTRO")
@@ -203,6 +221,8 @@ def create(template_pkg_name: str, template_url: str):
     add_git_config_info(answers)
 
     add_ros_distro(answers)
+
+    add_git_provider(answers, args.destination)
 
     # get pkg template location if installed as ros pkg
     try:
