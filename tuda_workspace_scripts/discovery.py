@@ -1,11 +1,14 @@
+from ament_index_python.packages import get_package_share_directory
 import re
 import os
 import yaml
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
+from jinja2 import Environment, FileSystemLoader
 from .print import print_info, print_warn
 from .robots import Robot, ZenohRouter, load_robots
 from .workspace import get_workspace_root
+
 
 ws_root = get_workspace_root()
 if not ws_root:
@@ -96,10 +99,9 @@ def create_cyclonedds_router_config_xml(
                     f"Existing cyclonedds config found at {CYCLONEDDS_URI}. Backing up as {CYCLONEDDS_URI}.backup{i}."
                 )
                 os.rename(CYCLONEDDS_URI, f"{CYCLONEDDS_URI}.backup{i}")
-    xml_str = minidom.parseString(ET.tostring(config)).toprettyxml(indent="    ")
+
     with open(CYCLONEDDS_URI, "w", encoding="utf-8") as file:
-        file.write(f"{XML_MARKER}\n")
-        file.write(xml_str)
+        file.write(config)
     print_info(f"Cyclone DDS config updated.")
 
 
@@ -166,47 +168,16 @@ def create_zenoh_router_config_yaml(
     print_info(f"Zenoh router config updated.")
 
 
-def _create_cyclonedds_config_xml(peers: list[str]) -> ET.Element:
-    # Define XML namespaces
-    nsmap = {
-        "xmlns": "https://cdds.io/config",
-        "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
-        "xsi:schemaLocation": "https://cdds.io/config https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd",
-    }
-
-    # Create the root element
-    root = ET.Element("CycloneDDS", nsmap)
-
-    # Create the Domain element
-    domain = ET.SubElement(root, "Domain", {"Id": "any"})
-
-    general = ET.SubElement(domain, "General")
-    interfaces = ET.SubElement(general, "Interfaces")
-    ET.SubElement(
-        interfaces,
-        "NetworkInterface",
-        {"autodetermine": "true", "priority": "default", "multicast": "default"},
+def _create_cyclonedds_config_xml(peers: list[str]) -> str:
+    # Get the template directory path from the share directory
+    template_dir = os.path.join(
+        get_package_share_directory("tuda_workspace_scripts"), "templates"
     )
-    ET.SubElement(general, "AllowMulticast").text = "false"
-    ET.SubElement(general, "MaxMessageSize").text = "65500B"
+    env = Environment(loader=FileSystemLoader(template_dir))
+    template = env.get_template("cyclonedds_config.xml.j2")
 
-    # Discovery settings
-    discovery = ET.SubElement(domain, "Discovery")
-    ET.SubElement(discovery, "EnableTopicDiscoveryEndpoints").text = "true"
-    ET.SubElement(discovery, "ParticipantIndex").text = "auto"
-    ET.SubElement(discovery, "MaxAutoParticipantIndex").text = "50"
-
-    # Peers list
-    peers_element = ET.SubElement(discovery, "Peers")
-    for address in peers:
-        ET.SubElement(peers_element, "Peer", {"Address": address})
-
-    # Internal settings
-    internal = ET.SubElement(domain, "Internal")
-    watermarks = ET.SubElement(internal, "Watermarks")
-    ET.SubElement(watermarks, "WhcHigh").text = "500kB"
-
-    return root
+    # Render the template with the peers list
+    return template.render(peers=peers)
 
 
 def _create_zenoh_router_config_yaml(routers):
