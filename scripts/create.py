@@ -160,19 +160,14 @@ def add_git_provider(answers, repo_path="."):
     try:
         repo = git.Repo(repo_path, search_parent_directories=True)
         remotes = repo.remotes
-        if "origin" in remotes:
-            remote_url = remotes["origin"].url
-        elif remotes:
-            # fallback to first remote
-            remote_url = list(remotes)[0].url
-        else:
-            # "No remotes found in repo"
-            return
-
-        if "github.com" in remote_url:
-            answers["git_provider"] = "github"
-        elif "gitlab" in remote_url:
-            answers["git_provider"] = "gitlab"
+        providers = ["github", "gitlab"]
+        for remote in remotes:
+            remote_url = remote.url
+            for provider in providers:
+                if provider in remote_url:
+                    answers["git_provider"] = provider
+                    return
+        print("No git provider detected")
     except Exception as e:
         # error while parsing git config
         # do not set git_provider
