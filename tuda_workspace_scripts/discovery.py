@@ -14,11 +14,10 @@ if not ws_root:
 RMW: str | None = os.getenv("RMW_IMPLEMENTATION", None)
 CYCLONEDDS_URI: str | None = os.getenv("CYCLONEDDS_URI", None)
 ZENOH_ROUTER_CONFIG_PATH: str | None = os.getenv("ZENOH_ROUTER_CONFIG_URI", None)
-
+XML_MARKER = "<!-- This file is managed by tuda_workspace_scripts. Changes may be overwritten. -->"
 YAML_MARKER = (
     "# This file is managed by tuda_workspace_scripts. Changes may be overwritten."
 )
-XML_MARKER = "<!-- This file is managed by tuda_workspace_scripts. Changes may be overwritten. -->"
 
 
 def create_discovery_config(selected_robots: list[str], custom_addresses: list[str]):
@@ -161,10 +160,11 @@ def create_zenoh_router_config_yaml(
                 os.rename(
                     ZENOH_ROUTER_CONFIG_PATH, f"{ZENOH_ROUTER_CONFIG_PATH}.backup{i}"
                 )
+
+    # Write new config to file
     with open(ZENOH_ROUTER_CONFIG_PATH, "w") as file:
         file.write(f"{YAML_MARKER}\n")
         yaml.dump(config, file, default_flow_style=False)
-    print_info(f"Zenoh router config updated.")
 
 
 def _create_cyclonedds_config_xml(peers: list[str]) -> str:
@@ -177,6 +177,35 @@ def _create_cyclonedds_config_xml(peers: list[str]) -> str:
 
     # Render the template with the peers list
     return template.render(peers=peers)
+
+
+def print_discovery_config():
+    if RMW == "rmw_zenoh_cpp":
+        print_zenoh_discovery_config()
+    elif RMW == "rmw_cyclonedds_cpp":
+        print_cyclonedds_discovery_config()
+    elif RMW:
+        raise NotImplementedError(f"Discovery is not implemented for RMW {RMW}")
+    else:
+        raise RuntimeError("RMW_IMPLEMENTATION is not set.")
+
+
+def print_cyclonedds_discovery_config():
+    if os.path.exists(CYCLONEDDS_URI):
+        print_info(f"Configuration file: {CYCLONEDDS_URI}")
+        with open(CYCLONEDDS_URI, "r") as file:
+            print_info(file.read())
+    else:
+        print_warn(f"Configuration file not found: {CYCLONEDDS_URI}")
+
+
+def print_zenoh_discovery_config():
+    if os.path.exists(ZENOH_ROUTER_CONFIG_PATH):
+        print_info(f"Configuration file: {ZENOH_ROUTER_CONFIG_PATH}")
+        with open(ZENOH_ROUTER_CONFIG_PATH, "r") as file:
+            print_info(file.read())
+    else:
+        print_warn(f"Configuration file not found: {ZENOH_ROUTER_CONFIG_PATH}")
 
 
 def _create_zenoh_router_config_yaml(routers):

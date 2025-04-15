@@ -67,6 +67,12 @@ Examples: hostname:8443 10.0.10.3:8231/tcp
     selected_robots = args.robots
     custom_addresses = args.address or []
 
+    # If no arguments are provided, print the current status
+    if not selected_robots and not custom_addresses:
+        parser.print_usage()
+        print_discovery_config()
+        return
+
     # Validation logic
     if not selected_robots and not custom_addresses:
         parser.error("You must specify either 'robots' or '--address'.")
@@ -79,10 +85,6 @@ Examples: hostname:8443 10.0.10.3:8231/tcp
         parser.error("'all' cannot be combined with other robots.")
 
     create_discovery_config(selected_robots, custom_addresses)
-
-    print_warn(
-        "Warning: The settings are applied to all terminals and new started ROS nodes. Restart old nodes if necessary."
-    )
 
 
 if __name__ == "__main__":
