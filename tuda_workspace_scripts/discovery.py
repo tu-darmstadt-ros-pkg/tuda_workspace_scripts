@@ -161,10 +161,10 @@ def create_zenoh_router_config_yaml(
                     ZENOH_ROUTER_CONFIG_PATH, f"{ZENOH_ROUTER_CONFIG_PATH}.backup{i}"
                 )
 
-    # Write new config to file
     with open(ZENOH_ROUTER_CONFIG_PATH, "w") as file:
         file.write(f"{YAML_MARKER}\n")
         yaml.dump(config, file, default_flow_style=False)
+    print_info(f"Zenoh router config updated.")
 
 
 def _create_cyclonedds_config_xml(peers: list[str]) -> str:
@@ -192,7 +192,8 @@ def print_discovery_config():
 
 def print_cyclonedds_discovery_config():
     if os.path.exists(CYCLONEDDS_URI):
-        print_info(f"Configuration file: {CYCLONEDDS_URI}")
+        print(f"RMW Implementation: {RMW}")
+        print(f"Configuration file: {CYCLONEDDS_URI}")
         with open(CYCLONEDDS_URI, "r") as file:
             print_info(file.read())
     else:
@@ -201,7 +202,8 @@ def print_cyclonedds_discovery_config():
 
 def print_zenoh_discovery_config():
     if os.path.exists(ZENOH_ROUTER_CONFIG_PATH):
-        print_info(f"Configuration file: {ZENOH_ROUTER_CONFIG_PATH}")
+        print(f"RMW Implementation: {RMW}")
+        print(f"Configuration file: {ZENOH_ROUTER_CONFIG_PATH}")
         with open(ZENOH_ROUTER_CONFIG_PATH, "r") as file:
             print_info(file.read())
     else:
