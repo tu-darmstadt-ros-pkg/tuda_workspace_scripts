@@ -37,11 +37,24 @@ Zenoh
 IP_OR_HOSTNAME[:PORT][/PROTOCOL]
 Port defaults to 7447 and protocol to tcp.
 Examples: hostname:8443 10.0.10.3:8231/tcp
+
+CycloneDDS
+==========
+IP_OR_HOSTNAME
+Examples: hostname 10.0.10.3
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     robots = load_robots()
 
+    # Add print-config option
+    parser.add_argument(
+        "--print-config",
+        action="store_true",
+        help="Print the current discovery configuration and exit.",
+    )
+
+    # Add configuration options
     choices = list(robots.keys())
     choices.extend(["off", "all"])
     first_arg = parser.add_argument(
@@ -64,6 +77,15 @@ Examples: hostname:8443 10.0.10.3:8231/tcp
     argcomplete.autocomplete(parser)
 
     args = parser.parse_args()
+
+    # Check for mutually exclusive usage
+    if args.print_config and args.robots:
+        parser.error("--print-config cannot be used with robot selection")
+
+    if args.print_config:
+        print_discovery_config()
+        return
+
     selected_robots = args.robots
     custom_addresses = args.address or []
 
@@ -79,10 +101,6 @@ Examples: hostname:8443 10.0.10.3:8231/tcp
         parser.error("'all' cannot be combined with other robots.")
 
     create_discovery_config(selected_robots, custom_addresses)
-
-    print_warn(
-        "Warning: The settings are applied to all terminals and new started ROS nodes. Restart old nodes if necessary."
-    )
 
 
 if __name__ == "__main__":
