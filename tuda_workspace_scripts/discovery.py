@@ -180,7 +180,7 @@ def _create_cyclonedds_config_xml(peers: list[str]) -> str:
 
 
 def print_discovery_config():
-    print(f"RMW Implementation: {RMW}")
+    print_info(f"RMW Implementation: {RMW}")
     if RMW == "rmw_zenoh_cpp":
         print_zenoh_discovery_config()
     elif RMW == "rmw_cyclonedds_cpp":
@@ -192,19 +192,19 @@ def print_discovery_config():
 
 
 def print_cyclonedds_discovery_config():
-    if os.path.exists(CYCLONEDDS_URI):        
-        print(f"Configuration file: {CYCLONEDDS_URI}")
+    if os.path.exists(CYCLONEDDS_URI):
+        print_info(f"Configuration file: {CYCLONEDDS_URI}")
         with open(CYCLONEDDS_URI, "r") as file:
-            print_info(file.read())
+            print(file.read())
     else:
         print_warn(f"Configuration file not found: {CYCLONEDDS_URI}")
 
 
 def print_zenoh_discovery_config():
     if os.path.exists(ZENOH_ROUTER_CONFIG_PATH):
-        print(f"Configuration file: {ZENOH_ROUTER_CONFIG_PATH}")
+        print_info(f"Configuration file: {ZENOH_ROUTER_CONFIG_PATH}")
         with open(ZENOH_ROUTER_CONFIG_PATH, "r") as file:
-            print_info(file.read())
+            print(file.read())
     else:
         print_warn(f"Configuration file not found: {ZENOH_ROUTER_CONFIG_PATH}")
 
