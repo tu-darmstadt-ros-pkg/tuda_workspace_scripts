@@ -4,13 +4,13 @@ from tuda_workspace_scripts.workspace import get_workspace_root
 import os
 
 
-def fix() -> bool:
+def fix() -> int:
     print_header("Checking for unclean links")
     workspace_root = get_workspace_root()
     install_folder = os.path.join(workspace_root, "install")
     if not os.path.exists(install_folder):
         print_info("No install folder found.")
-        return False
+        return 0
     cleaned = False
     for root, dirs, files in os.walk(install_folder):
         for d in dirs:
@@ -25,9 +25,9 @@ def fix() -> bool:
                 cleaned = True
     if cleaned:
         print_info("Found some broken links in the install space and removed them.")
-        return True
+        return 1
     print_info("All good.")
-    return False
+    return 0
 
 
 if __name__ == "__main__":

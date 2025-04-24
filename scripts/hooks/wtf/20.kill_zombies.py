@@ -3,7 +3,7 @@ from psutil import process_iter
 from tuda_workspace_scripts.print import confirm, print_header, print_info, print_error
 
 
-def fix() -> bool:
+def fix() -> int:
     print_header("Checking for zombies")
     gz_processes = []
     for p in process_iter(["pid", "name", "cmdline"]):
@@ -11,14 +11,14 @@ def fix() -> bool:
             gz_processes.append(p)
     if len(gz_processes) == 0:
         print_info("No zombies found.")
-        return False
+        return 0
     if confirm("Found gazebo processes. Are you expecting gazebo to be running?"):
-        return False
+        return 0
     print_error("Found gazebo zombies.")
     for p in gz_processes:
         p.kill()
     print_info("Killed all zombies.")
-    return True
+    return 1
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 import os
+import subprocess
 from typing import Generator
+import importlib.util
 
 
 def get_scripts_dirs() -> Generator[str, None, None]:
@@ -7,11 +9,13 @@ def get_scripts_dirs() -> Generator[str, None, None]:
         if os.path.isdir(dir):
             yield dir
 
+
 def get_hook_dirs() -> Generator[str, None, None]:
     for script_dir in get_scripts_dirs():
         hook_dir = os.path.join(script_dir, "hooks")
         if os.path.isdir(hook_dir):
             yield hook_dir
+
 
 def get_hooks_for_command(command: str) -> Generator[str, None, None]:
     scripts = set()  # Collect scripts to avoid duplicates
@@ -25,3 +29,10 @@ def get_hooks_for_command(command: str) -> Generator[str, None, None]:
                 if os.path.isfile(script_path):
                     scripts.add(script)
                     yield script_path
+
+
+def load_method_from_file(file_path: str, method_name: str):
+    spec = importlib.util.spec_from_file_location("module.name", file_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return getattr(module, method_name)
