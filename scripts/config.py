@@ -19,9 +19,9 @@ if __name__ == "__main__":
     sub_parsers.add_parser("show", help="Show the current configuration.")
     sub_parsers.add_parser("list", help="List all variables.")
     get_parser = sub_parsers.add_parser("get", help="Get a variable.")
-    get_parser.add_argument(
-        "VARIABLE", help="The variable to get."
-    ).completer = VariableChoicesCompleter()
+    get_parser.add_argument("VARIABLE", help="The variable to get.").completer = (
+        VariableChoicesCompleter()
+    )
     get_parser.add_argument(
         "--value-only",
         default=False,
@@ -29,12 +29,12 @@ if __name__ == "__main__":
         help="Only print the value of the variable.",
     )
     set_parser = sub_parsers.add_parser("set", help="Set a variable.")
-    set_parser.add_argument(
-        "VARIABLE", help="The variable to set."
-    ).completer = VariableChoicesCompleter()
-    set_parser.add_argument(
-        "VALUE", help="The value to set."
-    ).completer = ValueChoicesCompleter()
+    set_parser.add_argument("VARIABLE", help="The variable to set.").completer = (
+        VariableChoicesCompleter()
+    )
+    set_parser.add_argument("VALUE", help="The value to set.").completer = (
+        ValueChoicesCompleter()
+    )
     argcomplete.autocomplete(parser)
     args = parser.parse_args()
 
