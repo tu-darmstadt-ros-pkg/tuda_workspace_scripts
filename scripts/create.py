@@ -5,7 +5,8 @@ import argcomplete
 import argparse
 import os
 from ament_index_python.packages import get_package_share_directory
-
+import time
+import subprocess
 try:
     import git
 except ImportError:
@@ -233,7 +234,22 @@ def create(template_pkg_name: str, template_url: str):
         )
         template_location = template_url
         
+    start_time = time.time()
     create_from_template(template_location, args.destination, answers, args.defaults)
+
+    # Check if .pre-commit-config.yaml exists and was newly created
+    pre_commit_config_path = os.path.join(args.destination, ".pre-commit-config.yaml")
+    if os.path.exists(pre_commit_config_path):
+        if os.path.getmtime(pre_commit_config_path) > start_time:
+            print(".pre-commit-config.yaml was newly created. Installing pre-commit hooks...")
+            try:
+                subprocess.run(
+                    ["pre-commit", "install"],
+                    cwd=args.destination,
+                    check=True,
+                )
+            except subprocess.CalledProcessError as e:
+                print(f"Failed to install pre-commit hooks: {e}")
 
 
 if __name__ == "__main__":
