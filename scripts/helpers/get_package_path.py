@@ -10,7 +10,7 @@ if __name__ == "__main__":
     except:
         path = None
 
-    # Check if path is in workspace, if so return path to source directory 
+    # Check if path is in workspace, if so return path to source directory
     workspace_root = get_workspace_root()
     if path is None or realpath(path).startswith(realpath(workspace_root)):
         path = get_package_path(sys.argv[1])

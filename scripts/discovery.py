@@ -2,9 +2,11 @@
 # PYTHON_ARGCOMPLETE_OK
 import argparse
 import argcomplete
+from tuda_workspace_scripts.discovery import *
 from tuda_workspace_scripts.print import *
 from tuda_workspace_scripts.robots import *
-from tuda_workspace_scripts.discovery import *
+from tuda_workspace_scripts.scripts import get_hooks_for_command, execute_hook
+from os.path import basename
 
 
 class RobotChoicesCompleter:
@@ -101,6 +103,14 @@ Examples: hostname 10.0.10.3
         parser.error("'all' cannot be combined with other robots.")
 
     create_discovery_config(selected_robots, custom_addresses)
+
+    # Get hooks and sort them by their filename
+    hooks = list(sorted(get_hooks_for_command("discovery"), key=basename))
+    for hook in hooks:
+        result = execute_hook(hook, "on_discovery_updated", capture_output=False)
+        if not result.success:
+            print_error(f"Error executing hook: {hook}")
+            continue
 
 
 if __name__ == "__main__":

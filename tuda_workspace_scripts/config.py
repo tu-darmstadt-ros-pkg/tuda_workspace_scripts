@@ -50,7 +50,9 @@ class Config(object):
             self._config = None
         if self._config is None:
             self._config = {}
-        self.variables = _ConfigVariables(self._config["variables"] if 'variables' in self._config else {})
+        self.variables = _ConfigVariables(
+            self._config["variables"] if "variables" in self._config else {}
+        )
 
     def save(self) -> None:
         os.makedirs(os.path.dirname(self._path), exist_ok=True)

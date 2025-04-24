@@ -32,7 +32,7 @@ def print_changes(path, root_path):
         # Need to reverse using R=True, otherwise we get the diff from tree to HEAD meaning deleted files are added and vice versa
         changes += repo.index.diff("HEAD", R=True)
     except git.BadName as e:
-        pass # Repo has no HEAD which means it probably also has no branches yet and was just initialized
+        pass  # Repo has no HEAD which means it probably also has no branches yet and was just initialized
 
     # Check branches for uncommited commits and pure local branches
     uncommited_commits = []
@@ -68,7 +68,9 @@ def print_changes(path, root_path):
             branch_name = f"detached at {repo.head.commit}"
         else:
             branch_name = repo.head.ref.name
-        print_info(f"{os.path.relpath(path, root_path)} {Colors.LPURPLE}({branch_name})")
+        print_info(
+            f"{os.path.relpath(path, root_path)} {Colors.LPURPLE}({branch_name})"
+        )
         if len(repo.branches) == 0:
             print_color(Colors.LRED, "  No branches configured upstream.")
         for branch in uncommited_commits:
@@ -129,7 +131,7 @@ def main() -> int:
     if ws_root_path is None:
         print_workspace_error()
         return 1
-    
+
     if os.path.isdir(os.path.join(ws_root_path, ".git")):
         print_color(Colors.GREEN, "Looking for changes in {}...".format(ws_root_path))
         print_changes(ws_root_path, None)

@@ -16,14 +16,13 @@ except ImportError:
 
 
 def parseArguments() -> argparse.Namespace:
-
     parser = argparse.ArgumentParser(
         description="Creates a ROS 2 package from templates"
     )
 
     parser.add_argument(
         "template",
-        nargs='?',
+        nargs="?",
         type=str,
         default=None,
         choices=["cpp_pkg", "launch_pkg", "msgs_pkg", "python_pkg", "ci"],
@@ -229,7 +228,6 @@ def verify_pre_commit_installed():
 
 
 def create(template_pkg_name: str, template_url: str):
-
     # pass specified arguments as data to copier
     args = parseArguments()
     workspace_src = os.path.join(get_workspace_root(), "src")
@@ -275,7 +273,7 @@ def create(template_pkg_name: str, template_url: str):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
-            print_info("pre-commit hooks installed successfully.") 
+            print_info("pre-commit hooks installed successfully.")
         except subprocess.CalledProcessError as e:
             print_error(f"Failed to install pre-commit hooks: {e}")
 

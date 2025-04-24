@@ -106,7 +106,8 @@ class Robot:
                     f"Remote PC {command.delegate_to} not found in robot {self.name}"
                 )
             target = self.remote_pcs[command.delegate_to]
-        return f"ssh -p {target.port} -t {target.user}@{target.hostname} '{command.command.replace("'", "\\'")}'"
+        escaped_command = command.command.replace("'", "\\'")
+        return f"ssh -p {target.port} -t {target.user}@{target.hostname} '{escaped_command}'"
 
     def get_shell_command(
         self, pc_name: str, command_name: str, vars: dict = {}
