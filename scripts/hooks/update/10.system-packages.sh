@@ -4,10 +4,10 @@
 _NO_SUDO=0
 _DEFAULT_YES=""
 for arg in "$@"; do
-  if [ "$arg" = "--no-sudo" ]; then
+  if [ "$arg" = "no_sudo=True" ] || [ "$arg" = "--no-sudo" ]; then
     _NO_SUDO=1
   fi
-  if [ "$arg" = "--default-yes" ] || [ "$arg" = "-y" ]; then
+  if [ "$arg" = "default_yes=True" ] || [ "$arg" = "--default-yes" ] || [ "$arg" = "-y" ]; then
     _DEFAULT_YES="-y"
   fi
 done
