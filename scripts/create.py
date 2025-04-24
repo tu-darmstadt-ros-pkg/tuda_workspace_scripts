@@ -22,11 +22,12 @@ def parseArguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--template",
+        "template",
+        nargs='?',
         type=str,
         default=None,
-        choices=["cpp_pkg", "msgs_pkg", "python_pkg", "ci"],
-        help="Template",
+        choices=["cpp_pkg", "launch_pkg", "msgs_pkg", "python_pkg", "ci"],
+        help="Template Type",
     )
     parser.add_argument(
         "--destination",
