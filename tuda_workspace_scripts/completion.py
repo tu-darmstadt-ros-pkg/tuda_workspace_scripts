@@ -1,6 +1,7 @@
 import argparse
 from typing import List
 from argcomplete.completers import ChoicesCompleter
+
 try:
     from argcomplete.completers import SuppressCompleter
 except ImportError:
@@ -16,7 +17,7 @@ class PrefixFilteredChoicesCompleter(ChoicesCompleter):
         options = super(PrefixFilteredChoicesCompleter, self).__call__(**kwargs)
         prefix = kwargs.get("prefix", "")
         return [option for option in options if option.startswith(prefix)]
-    
+
 
 class SuppressIfPackagesProvidedCompleter(SuppressCompleter):
     def suppress(self, parsed_args, **kwargs):

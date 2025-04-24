@@ -64,7 +64,7 @@ if __name__ == "__main__":
         if var is None:
             if not args.value_only:
                 print(f"Variable {args.VARIABLE} does not exist.")
-            exit(1) # Exit with error code if variable does not exist.
+            exit(1)  # Exit with error code if variable does not exist.
         else:
             value = config.variables[var.name]
             if args.value_only:
