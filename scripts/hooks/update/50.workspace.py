@@ -33,6 +33,38 @@ def launch_subprocess(command, cwd=None, stdout=None, stderr=None):
                 process.terminate()
         raise
 
+
+def is_deleted_branch(repo: git.Repo, branch: git.Head) -> bool:
+    """
+    Check if a branch is deleted on the remote.
+    """
+    try:
+        tracking_branch = branch.tracking_branch()
+        if tracking_branch is None:
+            return False
+        for remote in repo.remotes:
+            if remote.name == tracking_branch.remote_name:
+                if (
+                    tracking_branch in remote.refs
+                    and tracking_branch not in remote.stale_refs
+                ):
+                    return False
+                break
+
+        if any(True for _ in repo.iter_commits("{0}@{{u}}..{0}".format(branch.name))):
+            print_warn(
+                f"Branch {branch.name} seems to be deleted on remote but still has uncommitted commits."
+            )
+            return False
+
+    except (git.exc.GitCommandError, Exception) as e:
+        print_error(
+            f"{os.path.basename(repo.working_tree_dir)} has error on branch {branch.name}: {e}"
+        )
+        return False
+    return True
+
+
 # We ignore all args here, because we don't need them
 def update(**_) -> bool:
     """
@@ -54,16 +86,30 @@ def update(**_) -> bool:
                 branch_name = f"detached at {repo.head.commit}"
             else:
                 branch_name = repo.head.ref.name
-            print_subheader(
-                f"Updating {relative_path} {Colors.LPURPLE}({branch_name})"
-            )
+            print_subheader(f"Updating {relative_path} {Colors.LPURPLE}({branch_name})")
             if not repo.head.is_valid():
                 print_warn("Repository has no valid HEAD. Not updating.")
                 return True
             if repo.head.is_detached:
                 print_info("Repository is in detached HEAD state. Not updating.")
                 return True
-            return launch_subprocess(["git", "pull"], cwd=path).returncode == 0
+            if launch_subprocess(["git", "pull"], cwd=path).returncode != 0:
+                return False
+
+            # Check branches for deleted branches
+            deleted_branches: list[git.Head] = [
+                branch for branch in repo.branches if is_deleted_branch(repo, branch)
+            ]
+            if len(deleted_branches) > 0 and confirm(
+                "The following branches are deleted on remote but still exist locally:\n"
+                + "\n".join([branch.name for branch in deleted_branches])
+                + "\nDo you want to delete them?"
+            ):
+                for branch in deleted_branches:
+                    repo.delete_head(branch)
+                print(f"Deleted {len(deleted_branches)} branches.")
+
+            return True
         except git.exc.InvalidGitRepositoryError:
             print_error("Failed to obtain git info for: {}".format(path))
             return False
