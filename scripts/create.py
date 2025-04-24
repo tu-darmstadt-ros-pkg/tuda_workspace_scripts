@@ -26,7 +26,7 @@ def parseArguments() -> argparse.Namespace:
         nargs='?',
         type=str,
         default=None,
-        choices=["cpp_pkg", "msgs_pkg", "python_pkg", "ci"],
+        choices=["cpp_pkg", "launch_pkg", "msgs_pkg", "python_pkg", "ci"],
         help="Template Type",
     )
     parser.add_argument(
