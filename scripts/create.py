@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 from tuda_workspace_scripts.workspace import get_workspace_root, PackageChoicesCompleter
-
+from tuda_workspace_scripts.print import print_error, print_info, confirm
 import argcomplete
 import argparse
 import os
 from ament_index_python.packages import get_package_share_directory
-import time
+
 import subprocess
+
 try:
     import git
 except ImportError:
@@ -205,6 +206,27 @@ def create_from_template(template, destination, answers, defaults):
         return
 
 
+def verify_pre_commit_installed():
+    try:
+        print("Verifying pre-commit installation...")
+        subprocess.run(
+            ["pre-commit", "--version"],
+            check=True,
+        )
+    except Exception as e:
+        if confirm("pre-commit is not installed. Do you want to install it? (y/n)"):
+            try:
+                subprocess.run(
+                    ["sudo", "apt", "install", "pre-commit"],
+                    check=True,
+                )
+                return True
+            except subprocess.CalledProcessError as e:
+                print(f"Failed to install pre-commit: {e}")
+                return False
+    return True
+
+
 def create(template_pkg_name: str, template_url: str):
 
     # pass specified arguments as data to copier
@@ -233,23 +255,29 @@ def create(template_pkg_name: str, template_url: str):
             f"Package '{template_pkg_name}' not found locally. Using remote template."
         )
         template_location = template_url
-        
-    start_time = time.time()
+
+    pre_commit_config_path = os.path.join(args.destination, ".pre-commit-config.yaml")
+    pre_commit_alreaey_exists = os.path.exists(pre_commit_config_path)
+
     create_from_template(template_location, args.destination, answers, args.defaults)
 
     # Check if .pre-commit-config.yaml exists and was newly created
     pre_commit_config_path = os.path.join(args.destination, ".pre-commit-config.yaml")
-    if os.path.exists(pre_commit_config_path):
-        if os.path.getmtime(pre_commit_config_path) > start_time:
-            print(".pre-commit-config.yaml was newly created. Installing pre-commit hooks...")
-            try:
-                subprocess.run(
-                    ["pre-commit", "install"],
-                    cwd=args.destination,
-                    check=True,
-                )
-            except subprocess.CalledProcessError as e:
-                print(f"Failed to install pre-commit hooks: {e}")
+    if not pre_commit_alreaey_exists and os.path.exists(pre_commit_config_path):
+        print(
+            ".pre-commit-config.yaml was newly created. Installing pre-commit hooks..."
+        )
+        if not verify_pre_commit_installed():
+            print("pre-commit installation failed. Please install it manually.")
+            return
+        try:
+            subprocess.run(
+                ["pre-commit", "install"],
+                cwd=args.destination,
+                check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to install pre-commit hooks: {e}")
 
 
 if __name__ == "__main__":
