@@ -169,7 +169,6 @@ def add_git_provider(answers, repo_path="."):
                 if provider in remote_url:
                     answers["git_provider"] = provider
                     return
-        print("No git provider detected")
     except Exception as e:
         # error while parsing git config
         # do not set git_provider
@@ -185,7 +184,7 @@ def create_from_template(template, destination, answers, defaults):
     try:
         import copier
     except ImportError:
-        print(
+        print_error(
             "Copier is required! Install using 'pip3 install copier --user --break-system-packages'"
         )
         raise
@@ -208,10 +207,11 @@ def create_from_template(template, destination, answers, defaults):
 
 def verify_pre_commit_installed():
     try:
-        print("Verifying pre-commit installation...")
         subprocess.run(
             ["pre-commit", "--version"],
             check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
     except Exception as e:
         if confirm("pre-commit is not installed. Do you want to install it? (y/n)"):
@@ -222,7 +222,7 @@ def verify_pre_commit_installed():
                 )
                 return True
             except subprocess.CalledProcessError as e:
-                print(f"Failed to install pre-commit: {e}")
+                print_error(f"Failed to install pre-commit: {e}")
                 return False
     return True
 
@@ -236,7 +236,6 @@ def create(template_pkg_name: str, template_url: str):
     # Adapt relative destination path
     if not os.path.isabs(args.destination):
         args.destination = os.path.join(workspace_src, args.destination)
-    print(f"Destination: {args.destination}")
 
     answers = {k: v for k, v in vars(args).items() if v is not None}
 
@@ -251,7 +250,7 @@ def create(template_pkg_name: str, template_url: str):
     try:
         template_location = get_package_share_directory(template_pkg_name)
     except KeyError:
-        print(
+        print_info(
             f"Package '{template_pkg_name}' not found locally. Using remote template."
         )
         template_location = template_url
@@ -264,20 +263,20 @@ def create(template_pkg_name: str, template_url: str):
     # Check if .pre-commit-config.yaml exists and was newly created
     pre_commit_config_path = os.path.join(args.destination, ".pre-commit-config.yaml")
     if not pre_commit_alreaey_exists and os.path.exists(pre_commit_config_path):
-        print(
-            ".pre-commit-config.yaml was newly created. Installing pre-commit hooks..."
-        )
         if not verify_pre_commit_installed():
-            print("pre-commit installation failed. Please install it manually.")
+            print_error("pre-commit installation failed. Please install it manually.")
             return
         try:
             subprocess.run(
                 ["pre-commit", "install"],
                 cwd=args.destination,
                 check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
+            print_info("pre-commit hooks installed successfully.") 
         except subprocess.CalledProcessError as e:
-            print(f"Failed to install pre-commit hooks: {e}")
+            print_error(f"Failed to install pre-commit hooks: {e}")
 
 
 if __name__ == "__main__":
