@@ -5,8 +5,9 @@ import argcomplete
 from tuda_workspace_scripts.discovery import *
 from tuda_workspace_scripts.print import *
 from tuda_workspace_scripts.robots import *
-from tuda_workspace_scripts.scripts import get_hooks_for_command, execute_hook
+from tuda_workspace_scripts.scripts import get_hooks_for_command, load_method_from_file
 from os.path import basename
+import subprocess
 
 
 class RobotChoicesCompleter:
@@ -107,10 +108,17 @@ Examples: hostname 10.0.10.3
     # Get hooks and sort them by their filename
     hooks = list(sorted(get_hooks_for_command("discovery"), key=basename))
     for hook in hooks:
-        result = execute_hook(hook, "on_discovery_updated", capture_output=False)
-        if not result.success:
-            print_error(f"Error executing hook: {hook}")
-            continue
+        if hook.endswith(".py"):
+            on_discovery_updated = load_method_from_file(hook, "on_discovery_updated")
+            if on_discovery_updated is None:
+                print_error(
+                    f"Hook {hook} does not contain a valid on_discovery_updated method."
+                )
+                continue
+            on_discovery_updated()
+        elif hook.endswith(".bash") or hook.endswith(".sh"):
+            executable = "bash" if hook.endswith(".bash") else "sh"
+            subprocess.run([executable, hook], cwd=get_workspace_root())
 
 
 if __name__ == "__main__":
