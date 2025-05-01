@@ -5,45 +5,45 @@ import os
 import subprocess
 from pathlib import Path
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 """
-This scripts makes sure that pre-commit hooks are installed in all git repositories (if they exist).
+This script installs and autoupdates pre-commit hooks in all git repositories
+that contain a `.pre-commit-config.yaml` file.
 """
 
 
-def is_git_repo(path):
+def is_git_repo(path: Path) -> bool:
     return (path / ".git").is_dir()
 
 
-def has_pre_commit_config(path):
+def has_pre_commit_config(path: Path) -> bool:
     return (path / ".pre-commit-config.yaml").is_file()
 
 
-def is_pre_commit_installed(path):
-    # Check for the presence of .git/hooks/pre-commit installed by pre-commit
+def is_pre_commit_installed(path: Path) -> bool:
     hook_path = path / ".git" / "hooks" / "pre-commit"
     if not hook_path.exists():
         return False
     try:
-        content = hook_path.read_text()
-        return "pre-commit" in content
+        return "pre-commit" in hook_path.read_text()
     except Exception:
         return False
 
 
-def install_pre_commit(path):
+def run_pre_commit_cmd(path: Path, args: list[str], label: str) -> bool:
     try:
         subprocess.run(
-            ["pre-commit", "install"],
+            ["pre-commit"] + args,
             cwd=str(path),
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        print_info(f"Installed pre-commit hook in: {path}")
+        print_info(f"{label} succeeded in: {path}")
         return True
     except subprocess.CalledProcessError as e:
-        print_error(f"Failed to install pre-commit in {path}:\n{e.stderr.decode()}")
+        print_error(f"{label} failed in {path}:\n{e.stderr.decode()}")
         return False
 
 
@@ -69,12 +69,19 @@ def ensure_pre_commit_available():
         return False
 
     return True
+def collect_precommit_repos(base_path: Path) -> list[Path]:
+    repos = []
+    for root, dirs, files in os.walk(base_path):
+        root_path = Path(root)
+        if is_git_repo(root_path) and has_pre_commit_config(root_path):
+            repos.append(root_path)
+            if ".git" in dirs:
+                dirs.remove(".git")
+    return repos
 
 
 def update(**_) -> bool:
-    print_header("Updating pre-commit hooks")
-    success = True
-    count = 0
+    print_header("Installing & Updating Pre-commit Hooks")
     base_path = get_workspace_root()
     if base_path is None:
         print_workspace_error()
@@ -95,4 +102,43 @@ def update(**_) -> bool:
         print_info(f"Installed pre-commit hooks in {count} repositories.")
     elif count == 0:
         print_info("No pre-commit hooks to install.")
+
+    repos = collect_precommit_repos(base_path)
+
+    installed_count = 0
+    updated_count = 0
+    success = True
+
+    # First: install hooks sequentially
+    for repo in repos:
+        if not is_pre_commit_installed(repo):
+            if run_pre_commit_cmd(repo, ["install"], "Install pre-commit"):
+                installed_count += 1
+            else:
+                success = False
+
+    # Then: update hooks in parallel
+    print_header("Running autoupdate in parallel")
+    with ThreadPoolExecutor() as executor:
+        futures = {
+            executor.submit(
+                run_pre_commit_cmd, repo, ["autoupdate"], "Autoupdate pre-commit"
+            ): repo
+            for repo in repos
+        }
+        for future in as_completed(futures):
+            repo = futures[future]
+            try:
+                result = future.result()
+                if result:
+                    updated_count += 1
+                else:
+                    success = False
+            except Exception as e:
+                print_error(f"Exception in autoupdate for {repo}: {e}")
+                success = False
+
+    print_info(
+        f"Installed {installed_count} and updated {updated_count} pre-commit hooks."
+    )
     return success
