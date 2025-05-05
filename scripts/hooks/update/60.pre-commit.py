@@ -4,6 +4,7 @@ from tuda_workspace_scripts.workspace import get_workspace_root
 import os
 import subprocess
 from pathlib import Path
+import shutil
 
 """
 This scripts makes sure that pre-commit hooks are installed in all git repositories (if they exist).
@@ -46,6 +47,30 @@ def install_pre_commit(path):
         return False
 
 
+def ensure_pre_commit_available():
+    if shutil.which("pre-commit") is not None:
+        return True
+
+    print_info("'pre-commit' not found. Installing via apt...")
+
+    try:
+        subprocess.run(
+            ["sudo", "apt-get", "install", "-y", "pre-commit"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except subprocess.CalledProcessError as e:
+        print_error(f"Failed to install 'pre-commit' via apt:\n{e.stderr.decode()}")
+        return False
+
+    if shutil.which("pre-commit") is None:
+        print_error("'pre-commit' installation completed but still not in PATH.")
+        return False
+
+    return True
+
+
 def update(**_) -> bool:
     print_header("Updating pre-commit hooks")
     success = True
@@ -54,7 +79,12 @@ def update(**_) -> bool:
     if base_path is None:
         print_workspace_error()
         return False
-    for root, dirs, files in os.walk(base_path):
+    if not ensure_pre_commit_available():
+        print_error(
+            "Failed to ensure 'pre-commit' is available. Cannot install pre-commit hooks."
+        )
+        return False
+    for root, _, _ in os.walk(base_path):
         root_path = Path(root)
         if is_git_repo(root_path):
             if has_pre_commit_config(root_path):
