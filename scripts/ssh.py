@@ -28,6 +28,13 @@ def main():
         default=False,
         help="Use windows instead of panes.",
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        default=False,
+        help="Enable verbose output.",
+    )
     argcomplete.autocomplete(parser)
     args = parser.parse_args()
 
@@ -38,6 +45,8 @@ def main():
         robot_name = target
         robot = robots[target]
         remote_pc = "all"
+        if args.verbose:
+            print("Target is a robot, using all remote PCs.")
     else:
         for robot in robots.values():
             if target in robot.remote_pcs:
@@ -47,6 +56,8 @@ def main():
         if remote_pc is None:
             print_error(f"PC or robot {target} not found!")
             exit(1)
+        if args.verbose:
+            print(f"Target is a remote PC on robot {robot_name}.")
 
     if robot_name not in robots:
         print_error(f"Robot {robot_name} not found!")
@@ -69,6 +80,8 @@ def main():
     # If single command, launch directly replacing the current process
     # Otherwise, use tmux to split the terminal
     if len(commands) == 1:
+        if args.verbose:
+            print(f"Executing command: {commands[0]}")
         args = shlex.split(commands[0])
         os.execvp(args[0], args)
     else:
