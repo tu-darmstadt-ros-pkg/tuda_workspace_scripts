@@ -50,18 +50,19 @@ def is_deleted_branch(repo: git.Repo, branch: git.Head) -> bool:
                 ):
                     return False
                 break
-
-        if any(True for _ in repo.iter_commits("{0}@{{u}}..{0}".format(branch.name))):
-            print_warn(
-                f"Branch {branch.name} seems to be deleted on remote but still has uncommitted commits."
-            )
-            return False
-
     except (git.exc.GitCommandError, Exception) as e:
         print_error(
             f"{os.path.basename(repo.working_tree_dir)} has error on branch {branch.name}: {e}"
         )
         return False
+    try:
+        if any(True for _ in repo.iter_commits("{0}@{{u}}..{0}".format(branch.name))):
+            print_warn(
+                f"Branch {branch.name} seems to be deleted on remote but still has commits that were not pushed."
+            )
+            return False
+    except git.exc.GitCommandError:
+        pass  # Ignore error if branch is not tracking anything
     return True
 
 
