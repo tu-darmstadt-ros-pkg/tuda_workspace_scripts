@@ -57,7 +57,7 @@ def main():
     )
     command_arg.completer = RobotCommandCompleter()
     parser.add_argument(
-        "--keep_open_duration",
+        "--keep-open-duration",
         type=int,
         default=5,
         help="Time in seconds to keep each pane or window open after the command completes. Defaults to 5.",
