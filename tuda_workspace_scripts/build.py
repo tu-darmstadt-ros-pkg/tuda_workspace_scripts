@@ -28,6 +28,7 @@ def build_packages(
     verbose: bool = False,
     build_base: str = "build",
     install_base: str = "install",
+    cmake_clean_cache: bool = False,
 ) -> int:
     os.chdir(workspace_root)
     packages = packages or []
@@ -40,6 +41,8 @@ def build_packages(
         arguments += ["--allow-overriding"] + packages
     if continue_on_error:
         arguments += ["--continue-on-error"]
+    if cmake_clean_cache:
+        arguments += ["--cmake-clean-cache"]
 
     cmake_arguments = []
     if build_type is not None:
