@@ -53,6 +53,12 @@ if __name__ == "__main__":
         "--clean", default=False, action="store_true", help="Clean before building."
     )
     parser.add_argument(
+        "--cmake-clean-cache",
+        default=False,
+        action="store_true",
+        help="Clean CMake cache before building.",
+    )
+    parser.add_argument(
         "--verbose",
         "-v",
         default=False,
@@ -100,6 +106,7 @@ if __name__ == "__main__":
                 continue_on_error=args.continue_on_error,
                 build_tests=args.build_tests,
                 verbose=args.verbose,
+                cmake_clean_cache=args.cmake_clean_cache,
             )
         )
     except KeyboardInterrupt:
