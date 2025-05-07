@@ -15,7 +15,8 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List
-
+import time
+import shutil
 from tuda_workspace_scripts.print import *
 from tuda_workspace_scripts.workspace import get_workspace_root
 
@@ -201,8 +202,25 @@ def update(**_) -> bool:
     # ----------------------- parallel phase ------------------------------- #
     total = len(repos)
 
+    _BAR_START = time.monotonic()
+
     def _progress(idx: int):
-        print(f"\rUpdating {total} repositories… {idx}/{total}", end="", flush=True)
+        """Draw a simple progress bar that lives on one terminal line."""
+        cols = shutil.get_terminal_size((80, 20)).columns
+        bar_len = max(10, min(50, cols - 30))  # leave space for counters & percent
+        filled = int(bar_len * idx / total)
+        bar = (
+            ("=" * filled + ">" + " " * (bar_len - filled - 1))
+            if idx < total
+            else "=" * bar_len
+        )
+        percent = (idx * 100) // total
+        elapsed = time.monotonic() - _BAR_START
+        print(
+            f"\r[{bar}] {percent:3d}% {idx}/{total} | {elapsed:4.0f}s",
+            end="",
+            flush=True,
+        )
 
     results: List[RepoResult] = []
     done = 0
