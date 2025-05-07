@@ -75,14 +75,18 @@ def main():
                 f"Command ssh not found for PC {remote_pc} on robot {robot_name}!"
             )
             exit(1)
-        commands = [robot.get_shell_command(remote_pc, "ssh", {"robot": robot_name})]
+        commands = {
+            remote_pc: robot.get_shell_command(remote_pc, "ssh", {"robot": robot_name})
+        }
 
     # If single command, launch directly replacing the current process
     # Otherwise, use tmux to split the terminal
     if len(commands) == 1:
+        # Get the command from the dictionary
+        command = next(iter(commands.values()))
         if args.verbose:
-            print(f"Executing command: {commands[0]}")
-        args = shlex.split(commands[0])
+            print(f"Executing command: {command}")
+        args = shlex.split(command)
         os.execvp(args[0], args)
     else:
         launch_tmux(
