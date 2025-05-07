@@ -40,10 +40,10 @@ def run_pre_commit_cmd(path: Path, args: list[str], label: str) -> bool:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        print_info(f"{label} succeeded in: {path}")
+        print_info(f"{label} in {path.name}")
         return True
     except subprocess.CalledProcessError as e:
-        print_error(f"{label} failed in {path}:\n{e.stderr.decode()}")
+        print_error(f"{label} failed in {path.name}:\n{e.stderr.decode()}")
         return False
 
 
@@ -69,6 +69,8 @@ def ensure_pre_commit_available():
         return False
 
     return True
+
+
 def collect_precommit_repos(base_path: Path) -> list[Path]:
     repos = []
     for root, dirs, files in os.walk(base_path):
@@ -91,17 +93,6 @@ def update(**_) -> bool:
             "Failed to ensure 'pre-commit' is available. Cannot install pre-commit hooks."
         )
         return False
-    for root, _, _ in os.walk(base_path):
-        root_path = Path(root)
-        if is_git_repo(root_path):
-            if has_pre_commit_config(root_path):
-                if not is_pre_commit_installed(root_path):
-                    success &= install_pre_commit(root_path)
-                    count = count + 1 if success else count
-    if count > 0:
-        print_info(f"Installed pre-commit hooks in {count} repositories.")
-    elif count == 0:
-        print_info("No pre-commit hooks to install.")
 
     repos = collect_precommit_repos(base_path)
 
@@ -112,7 +103,7 @@ def update(**_) -> bool:
     # First: install hooks sequentially
     for repo in repos:
         if not is_pre_commit_installed(repo):
-            if run_pre_commit_cmd(repo, ["install"], "Install pre-commit"):
+            if run_pre_commit_cmd(repo, ["install"], "Installing pre-commit"):
                 installed_count += 1
             else:
                 success = False
@@ -122,7 +113,7 @@ def update(**_) -> bool:
     with ThreadPoolExecutor() as executor:
         futures = {
             executor.submit(
-                run_pre_commit_cmd, repo, ["autoupdate"], "Autoupdate pre-commit"
+                run_pre_commit_cmd, repo, ["autoupdate"], "Autoupdating pre-commit"
             ): repo
             for repo in repos
         }
