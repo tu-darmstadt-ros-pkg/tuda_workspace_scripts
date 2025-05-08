@@ -4,6 +4,14 @@ from tuda_workspace_scripts.workspace import get_workspace_root
 import os
 
 
+def symlink_target_valid(link_path: str) -> bool:
+    if os.path.isfile(link_path) or os.path.isdir(link_path):
+        return True
+    if os.path.islink(link_path):
+        return symlink_target_valid(os.readlink(link_path))
+    return False
+
+
 def fix() -> int:
     print_header("Checking for unclean links")
     workspace_root = get_workspace_root()
@@ -15,12 +23,12 @@ def fix() -> int:
     for root, dirs, files in os.walk(install_folder):
         for d in dirs:
             link_path = os.path.join(root, d)
-            if os.path.islink(link_path) and not os.path.isdir(os.readlink(link_path)):
+            if os.path.islink(link_path) and not symlink_target_valid(link_path):
                 os.unlink(link_path)
                 cleaned = True
         for f in files:
             link_path = os.path.join(root, f)
-            if os.path.islink(link_path) and not os.path.isfile(os.readlink(link_path)):
+            if os.path.islink(link_path) and not symlink_target_valid(link_path):
                 os.unlink(link_path)
                 cleaned = True
     if cleaned:
