@@ -4,11 +4,17 @@ from tuda_workspace_scripts.workspace import get_workspace_root
 import os
 
 
-def symlink_target_valid(link_path: str) -> bool:
+def symlink_target_valid(link_path: str, visited=None) -> bool:
+    if visited is None:
+        visited = set()
     if os.path.isfile(link_path) or os.path.isdir(link_path):
         return True
     if os.path.islink(link_path):
-        return symlink_target_valid(os.readlink(link_path))
+        if link_path in visited:
+            return False  # Circular symlink detected
+        visited.add(link_path)
+        target_path = os.readlink(link_path)
+        return symlink_target_valid(target_path, visited)
     return False
 
 
