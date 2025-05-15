@@ -107,7 +107,7 @@ def update(**_) -> bool:
                 + "\nDo you want to delete them?"
             ):
                 for branch in deleted_branches:
-                    repo.delete_head(branch)
+                    repo.delete_head(branch, force=True)
                 print(f"Deleted {len(deleted_branches)} branches.")
 
             return True
