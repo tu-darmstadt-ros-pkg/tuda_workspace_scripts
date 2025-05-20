@@ -29,6 +29,11 @@ def main():
         help="Use windows instead of panes.",
     )
     parser.add_argument(
+        "--container",
+        type=str,
+        help="Connect to a Docker container on the remote host",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -65,19 +70,33 @@ def main():
 
     if remote_pc == "all":
         try:
-            commands = dict(robot.get_shell_commands("ssh"))
+            if args.container:
+                commands = {
+                    name: f"docker -H ssh://{pc.user}@{pc.hostname} exec -it {args.container} /bin/bash"
+                    for name, pc in robot.remote_pcs.items()
+                }
+            else:
+                commands = dict(robot.get_shell_commands("ssh"))
         except ValueError:
             print_error(f"Command ssh not found for any PC on robot {robot_name}!")
             exit(1)
     else:
-        if not robot.remote_pcs[remote_pc].has_command("ssh"):
-            print_error(
-                f"Command ssh not found for PC {remote_pc} on robot {robot_name}!"
-            )
-            exit(1)
-        commands = {
-            remote_pc: robot.get_shell_command(remote_pc, "ssh", {"robot": robot_name})
-        }
+        pc = robot.remote_pcs[remote_pc]
+        if args.container:
+            commands = {
+                remote_pc: f"docker -H ssh://{pc.user}@{pc.hostname} exec -it {args.container} /bin/bash"
+            }
+        else:
+            if not pc.has_command("ssh"):
+                print_error(
+                    f"Command ssh not found for PC {remote_pc} on robot {robot_name}!"
+                )
+                exit(1)
+            commands = {
+                remote_pc: robot.get_shell_command(
+                    remote_pc, "ssh", {"robot": robot_name}
+                )
+            }
 
     # If single command, launch directly replacing the current process
     # Otherwise, use tmux to split the terminal
