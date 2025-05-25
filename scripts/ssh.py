@@ -72,7 +72,7 @@ def main():
         try:
             if args.container:
                 commands = {
-                    name: f"docker -H ssh://{pc.user}@{pc.hostname} exec -it {args.container} /bin/bash"
+                    name: f"docker -H ssh://{pc.user}@{pc.hostname}:{pc.port} exec -it {args.container} /bin/bash"
                     for name, pc in robot.remote_pcs.items()
                 }
             else:
@@ -84,7 +84,7 @@ def main():
         pc = robot.remote_pcs[remote_pc]
         if args.container:
             commands = {
-                remote_pc: f"docker -H ssh://{pc.user}@{pc.hostname} exec -it {args.container} /bin/bash"
+                remote_pc: f"docker -H ssh://{pc.user}@{pc.hostname}:{pc.port} exec -it {args.container} /bin/bash"
             }
         else:
             if not pc.has_command("ssh"):
