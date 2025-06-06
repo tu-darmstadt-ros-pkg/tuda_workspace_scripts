@@ -3,6 +3,7 @@
 import argparse
 import argcomplete
 import subprocess
+from os.path import basename
 from tuda_workspace_scripts.print import *
 from tuda_workspace_scripts.scripts import get_hooks_for_command, load_method_from_file
 from tuda_workspace_scripts.workspace import get_workspace_root
@@ -24,7 +25,7 @@ def main():
         return 1
 
     count_fixes = 0
-    hooks = list(sorted(get_hooks_for_command("wtf")))
+    hooks = list(sorted(get_hooks_for_command("wtf"), key=basename))
     # Collect all wtf scripts in hooks/wtf folders of TUDA_WSS_SCRIPTS environment variable
     for script in hooks:
         # Load script and run fix command and obtain result
