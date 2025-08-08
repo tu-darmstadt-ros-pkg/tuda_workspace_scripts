@@ -42,6 +42,15 @@ def fix() -> tuple[int, int]:
             continue
     if count_warnings == 0:
         print_info("All good.")
+    else:
+        print_info(
+            "To fix this, add an export tag to the package.xml of the package(s)."
+        )
+        print(
+            """  <export>
+    <build_type>ament_cmake</build_type>
+  </export>"""
+        )
     return count_warnings, 0
 
 
