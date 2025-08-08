@@ -24,6 +24,7 @@ def main():
         print_workspace_error()
         return 1
 
+    count_problems = 0
     count_fixes = 0
     hooks = list(sorted(get_hooks_for_command("wtf"), key=basename))
     # Collect all wtf scripts in hooks/wtf folders of TUDA_WSS_SCRIPTS environment variable
@@ -31,18 +32,34 @@ def main():
         # Load script and run fix command and obtain result
         if script.endswith(".py"):
             fix = load_method_from_file(script, "fix")
-            count_fixes += fix()
+            result = fix()
+            if isinstance(result, tuple):
+                count_problems += result[0]
+                count_fixes += result[1]
+            elif isinstance(result, int):
+                count_problems += result
+                count_fixes += result
+            elif result is not None:
+                print_error(f"Unknown return type from {script}: {type(result)}")
+                continue
         elif script.endswith(".bash") or script.endswith(".sh"):
             executable = "bash" if script.endswith(".bash") else "sh"
             proc = subprocess.run([executable, script], cwd=get_workspace_root())
+            count_problems += proc.returncode
             count_fixes += proc.returncode
         else:
             print_error(f"Unknown file type for hook: {script}")
             continue
-    if count_fixes > 0:
-        print_success(f"{len(hooks)} checks have fixed {count_fixes} potential issues.")
+    if count_problems > 0:
+        print_success(
+            f"{len(hooks)} checks have fixed {count_fixes} out of {count_problems} potential issues."
+        )
     else:
         print_success(f"{len(hooks)} checks have found no potential issues.")
+    if count_problems > count_fixes:
+        print_warn(
+            f"{count_problems - count_fixes} issues could not be fixed automatically, please review these issues yourself."
+        )
 
 
 if __name__ == "__main__":
