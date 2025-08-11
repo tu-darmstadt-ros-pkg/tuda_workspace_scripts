@@ -10,9 +10,11 @@ from tuda_workspace_scripts.workspace import get_workspace_root
 
 """
 This script runs all wtf scripts in the hooks/wtf folders of the TUDA_WSS_SCRIPTS environment variable.
-A fix script needs to either be a python script with a fix method returning an integer
-indicating the number of issues that were fixed, or a bash/sh script which should return the number
-of issues that were fixed as exit code.
+A fix script needs to be either:
+  * A python script with a fix method returning either
+    * An integer indicating the number of issues that were found and fixed
+    * A tuple of (int, int) where the first element is the number of issues found and the second element is the number of issues fixed
+  * A bash/sh script which should return the number of issues that were fixed as exit code.
 """
 
 
