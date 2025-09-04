@@ -5,7 +5,7 @@ on:
     - master
   pull_request:
     branches:
-    - master
+    - main
 defaults:
   run:
     shell: bash
