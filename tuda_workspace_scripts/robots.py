@@ -181,7 +181,12 @@ def _load_pc_from_yaml(
                 continue
             commands[name] = _load_command_from_yaml(name, config["commands"][name])
     return RemotePC(
-        pc_name, address, hostname, user, port=port, netmask=netmask, commands=list(commands.values())
+        pc_name, address,
+        hostname,
+        user,
+        port=port,
+        netmask=netmask,
+        commands=list(commands.values())
     )
 
 
