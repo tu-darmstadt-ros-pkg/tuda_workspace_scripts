@@ -170,8 +170,14 @@ def _load_pc_from_yaml(
         raise ValueError(f"User not specified for remote PC {pc_name}")
     user = config["user"]
     hostname = config["hostname"] if "hostname" in config else pc_name
-    address = config["address"] if "address" in config else None
-    netmask = config["netmask"] if "netmask" in config else 24
+
+    if "address" in config:
+        entry = config["address"].split("/")
+        address = entry[0]
+        netmask = entry[1] if len(entry) > 1 else 24
+    else:
+        address = None
+        netmask = None
     port = config["port"] if "port" in config else 22
     commands = dict(shared_commands)
     if "commands" in config:
