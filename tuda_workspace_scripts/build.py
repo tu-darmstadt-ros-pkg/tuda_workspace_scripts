@@ -29,6 +29,7 @@ def build_packages(
     build_base: str = "build",
     install_base: str = "install",
     cmake_clean_cache: bool = False,
+    ament_cmake_args: list[str] = None,
 ) -> int:
     os.chdir(workspace_root)
     packages = packages or []
@@ -52,6 +53,10 @@ def build_packages(
     if any(cmake_arguments):
         arguments += ["--cmake-args"] + list(
             map(lambda x: f"' {shlex.quote(x)}'", cmake_arguments)
+        )
+    if ament_cmake_args:
+        arguments += ["--ament-cmake-args"] + list(
+            map(lambda x: f"{"-D" + x}", ament_cmake_args)
         )
     if mixin and len(mixin) > 0:
         arguments += ["--mixin"] + mixin

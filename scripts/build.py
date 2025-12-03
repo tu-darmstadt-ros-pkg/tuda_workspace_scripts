@@ -58,6 +58,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Clean CMake cache before building.",
     )
+    ament_cmake_args_arg = parser.add_argument(
+        "--ament-cmake-args",
+        default=None,
+        nargs="+",
+        help="Additional arguments to pass to ament_cmake. Such as VAR=VALUE.",
+    )
     parser.add_argument(
         "--verbose",
         "-v",
@@ -107,6 +113,7 @@ if __name__ == "__main__":
                 build_tests=args.build_tests,
                 verbose=args.verbose,
                 cmake_clean_cache=args.cmake_clean_cache,
+                ament_cmake_args=args.ament_cmake_args,
             )
         )
     except KeyboardInterrupt:
