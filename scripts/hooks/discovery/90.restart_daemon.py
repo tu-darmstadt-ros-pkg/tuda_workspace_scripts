@@ -3,7 +3,7 @@ from ros2cli.node.daemon import is_daemon_running, spawn_daemon, shutdown_daemon
 from tuda_workspace_scripts.print import *
 
 
-def on_discovery_updated():
+def on_discovery_updated(**_):
     print_header("Restarting ROS2 daemon")
     if is_daemon_running(args=[]):
         if not shutdown_daemon(args=[], timeout=10):
