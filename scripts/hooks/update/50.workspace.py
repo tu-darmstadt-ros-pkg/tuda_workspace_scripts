@@ -17,9 +17,17 @@ import time
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Tuple
 
-from tuda_workspace_scripts.print import *  # TU DA helper
+from tuda_workspace_scripts.print import (
+    print_header,
+    print_subheader,
+    print_error,
+    print_info,
+    print_warn,
+    confirm,
+    Colors,
+    print_workspace_error,
+)
 from tuda_workspace_scripts.workspace import get_workspace_root
 
 try:
@@ -32,7 +40,7 @@ except ImportError:
     raise
 
 
-# ───────────────────────── helpers ──────────────────────────────────────────────
+# HELPERS
 def launch_subprocess(cmd: list[str] | tuple[str, ...], cwd: str | Path):
     """Run *cmd* in *cwd*, forwarding Ctrl-C to the child process group."""
     try:
@@ -43,10 +51,9 @@ def launch_subprocess(cmd: list[str] | tuple[str, ...], cwd: str | Path):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            preexec_fn=os.setpgrp,
+            start_new_session=True,
         )
     except KeyboardInterrupt:
-        os.killpg(0, signal.SIGINT)
         raise
 
 
@@ -62,7 +69,7 @@ def _has_unpushed_commits(repo: git.Repo, branch_name: str) -> bool:
         return False
 
 
-def _is_deleted_branch(repo: git.Repo, branch: git.Head) -> Tuple[bool, str | None]:
+def _is_deleted_branch(repo: git.Repo, branch: git.Head) -> tuple[bool, str | None]:
     """
     Returns (deletable, warning)
 
@@ -74,11 +81,31 @@ def _is_deleted_branch(repo: git.Repo, branch: git.Head) -> Tuple[bool, str | No
         return False, None
 
     try:
-        remote = repo.remotes[tracking.remote_name]
-        if tracking in remote.refs:  # upstream still exists
+        # tracking.remote_name might fail if config is corrupt, handle safely
+        if not tracking.remote_name:
             return False, None
+
+        remote = repo.remotes[tracking.remote_name]
+
+        # Check if the tracking ref actually exists in the remote's refs
+        if tracking in remote.refs:
+            return False, None
+
     except (IndexError, ValueError):  # remote itself lost
+        if not repo.head.is_detached and branch.name == repo.head.ref.name:
+            warn = (
+                f"Remote '{tracking.remote_name}' for current branch {branch.name} "
+                "does not exist anymore. Skipping deletion."
+            )
+            return False, warn
         return False, None
+
+    if not repo.head.is_detached and branch.name == repo.head.ref.name:
+        warn = (
+            f"Current branch {branch.name} was deleted on the remote. "
+            "Skipping deletion."
+        )
+        return False, warn
 
     if _has_unpushed_commits(repo, branch.name):
         warn = (
@@ -90,7 +117,7 @@ def _is_deleted_branch(repo: git.Repo, branch: git.Head) -> Tuple[bool, str | No
     return True, None
 
 
-# ───────────────────────── result container ─────────────────────────────────────
+# RESULT CONTAINER
 class RepoResult:
     __slots__ = (
         "path",
@@ -112,8 +139,8 @@ class RepoResult:
         fetch_ok: bool,
         pull_attempted: bool,
         pull_ok: bool,
-        deletable: List[str],
-        warnings: List[str],
+        deletable: list[str],
+        warnings: list[str],
         stdout: str,
         stderr: str,
         error: str | None = None,
@@ -130,10 +157,16 @@ class RepoResult:
         self.error = error
 
 
-# ───────────────────────── worker (parallel) ────────────────────────────────────
+# WORKER (PARALLEL)
 def process_repo(repo_path: Path) -> RepoResult:
     """Fetch, optional pull, stale-branch detection – runs in a thread."""
     try:
+        # 1. Subprocess Fetch (Side effect: updates refs on disk)
+        fetch = launch_subprocess(["git", "fetch", "--all", "--prune"], cwd=repo_path)
+        fetch_ok = fetch.returncode == 0
+
+        # 2. Instantiate GitPython Repo object NOW, after fetch,
+        # so it sees the pruned refs correctly.
         repo = git.Repo(repo_path)
 
         if not repo.head.is_valid():
@@ -147,14 +180,11 @@ def process_repo(repo_path: Path) -> RepoResult:
             else repo.head.ref.name
         )
 
-        # fetch & prune
-        fetch = launch_subprocess(["git", "fetch", "--all", "--prune"], cwd=repo_path)
-        fetch_ok = fetch.returncode == 0
-
-        # pull current branch (fast-forward only)
+        # 3. Pull current branch (fast-forward only)
         pull_attempted = False
         pull_ok = True
         pull_out = pull_err = ""
+
         if not repo.head.is_detached:
             upstream = repo.head.ref.tracking_branch()
             if upstream is not None and upstream in repo.refs:
@@ -164,9 +194,9 @@ def process_repo(repo_path: Path) -> RepoResult:
                 pull_out = pull.stdout or ""
                 pull_err = pull.stderr or ""
 
-        # stale-branch detection
-        deletable: List[str] = []
-        warnings: List[str] = []
+        # 4. Stale-branch detection
+        deletable: list[str] = []
+        warnings: list[str] = []
         if fetch_ok:
             for br in repo.branches:
                 can_del, warn = _is_deleted_branch(repo, br)
@@ -191,10 +221,10 @@ def process_repo(repo_path: Path) -> RepoResult:
         return RepoResult(repo_path, "?", False, False, False, [], [], "", "", str(exc))
 
 
-# ───────────────────────── discovery ────────────────────────────────────────────
-def collect_repos(ws_src: Path) -> List[Path]:
+# DISCOVERY
+def collect_repos(ws_src: Path) -> list[Path]:
     """Return absolute paths of *top-level* git repos under ws_src."""
-    repos: List[Path] = []
+    repos: list[Path] = []
     for root, dirs, _ in os.walk(ws_src):
         root_p = Path(root)
         if (root_p / ".git").is_dir():
@@ -203,7 +233,7 @@ def collect_repos(ws_src: Path) -> List[Path]:
     return repos
 
 
-# ───────────────────────── main ────────────────────────────────────────────────
+# MAIN
 def update(**_) -> bool:
     ws_root = get_workspace_root()
     if ws_root is None:
@@ -218,12 +248,14 @@ def update(**_) -> bool:
         print_info("No git repositories found.")
         return True
 
-    # ───── parallel phase ────────────────────────────────────────────────────
+    # PARALLEL PHASE
     total = len(repos)
     _BAR_START = time.monotonic()
 
+    # Calculate columns once to avoid system calls in loop
+    cols = shutil.get_terminal_size((80, 20)).columns
+
     def _progress(idx: int):
-        cols = shutil.get_terminal_size((80, 20)).columns
         bar_len = max(10, min(50, cols - 30))
         filled = int(bar_len * idx / total)
         bar = (
@@ -239,7 +271,7 @@ def update(**_) -> bool:
             flush=True,
         )
 
-    results: List[RepoResult] = []
+    results: list[RepoResult] = []
     done = 0
     _progress(done)
 
@@ -257,7 +289,7 @@ def update(**_) -> bool:
     finally:
         print()  # newline after progress bar
 
-    # ───── sequential phase ─────────────────────────────────────────────────
+    # SEQUENTIAL PHASE
     overall_ok = True
     for res in sorted(results, key=lambda r: r.path):
         rel = res.path.relative_to(ws_src)
@@ -292,18 +324,6 @@ def update(**_) -> bool:
         # branch-specific warnings
         for msg in res.warnings:
             print_warn(msg)
-            # Check branches for deleted branches
-            deleted_branches: list[git.Head] = [
-                branch for branch in repo.branches if is_deleted_branch(repo, branch)
-            ]
-            if len(deleted_branches) > 0 and confirm(
-                "The following branches are deleted on remote but still exist locally:\n"
-                + "\n".join([branch.name for branch in deleted_branches])
-                + "\nDo you want to delete them?"
-            ):
-                for branch in deleted_branches:
-                    repo.delete_head(branch, force=True)
-                print(f"Deleted {len(deleted_branches)} branches.")
 
         # candidate branches for deletion
         if res.deletable:
