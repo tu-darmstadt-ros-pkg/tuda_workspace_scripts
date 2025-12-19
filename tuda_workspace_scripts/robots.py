@@ -37,12 +37,16 @@ class RemotePC:
     def __init__(
         self,
         name: str,
+        address: str,
         hostname: str,
         user: str,
         commands: list[Command],
         port: int = 22,
+        netmask: int = 24,
     ):
         self.name = name
+        self.address = address
+        self.netmask = netmask
         self.hostname = hostname
         self.user = user
         self.port = port
@@ -166,6 +170,14 @@ def _load_pc_from_yaml(
         raise ValueError(f"User not specified for remote PC {pc_name}")
     user = config["user"]
     hostname = config["hostname"] if "hostname" in config else pc_name
+
+    if "address" in config:
+        entry = config["address"].split("/")
+        address = entry[0]
+        netmask = entry[1] if len(entry) > 1 else 24
+    else:
+        address = None
+        netmask = None
     port = config["port"] if "port" in config else 22
     commands = dict(shared_commands)
     if "commands" in config:
@@ -175,7 +187,13 @@ def _load_pc_from_yaml(
                 continue
             commands[name] = _load_command_from_yaml(name, config["commands"][name])
     return RemotePC(
-        pc_name, hostname, user, port=port, commands=list(commands.values())
+        pc_name,
+        address,
+        hostname,
+        user,
+        port=port,
+        netmask=netmask,
+        commands=list(commands.values()),
     )
 
 

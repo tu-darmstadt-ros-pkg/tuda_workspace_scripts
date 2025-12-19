@@ -292,6 +292,18 @@ def update(**_) -> bool:
         # branch-specific warnings
         for msg in res.warnings:
             print_warn(msg)
+            # Check branches for deleted branches
+            deleted_branches: list[git.Head] = [
+                branch for branch in repo.branches if is_deleted_branch(repo, branch)
+            ]
+            if len(deleted_branches) > 0 and confirm(
+                "The following branches are deleted on remote but still exist locally:\n"
+                + "\n".join([branch.name for branch in deleted_branches])
+                + "\nDo you want to delete them?"
+            ):
+                for branch in deleted_branches:
+                    repo.delete_head(branch, force=True)
+                print(f"Deleted {len(deleted_branches)} branches.")
 
         # candidate branches for deletion
         if res.deletable:

@@ -110,9 +110,6 @@ def create_zenoh_router_config_yaml(
 ):
     routers = []
 
-    # Always set localhost, even if the user did not specify it
-    routers.append(ZenohRouter("localhost", "7447", "tcp"))
-
     for name in selected_robots:
         if name == "off":
             break
