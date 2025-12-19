@@ -59,6 +59,14 @@ if __name__ == "__main__":
         help="Clean CMake cache before building.",
     )
     parser.add_argument(
+        "--parallel-workers",
+        "-j",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Limit the number of packages built in parallel.",
+    )
+    parser.add_argument(
         "--verbose",
         "-v",
         default=False,
@@ -107,6 +115,7 @@ if __name__ == "__main__":
                 build_tests=args.build_tests,
                 verbose=args.verbose,
                 cmake_clean_cache=args.cmake_clean_cache,
+                parallel_workers=args.parallel_workers,
             )
         )
     except KeyboardInterrupt:
