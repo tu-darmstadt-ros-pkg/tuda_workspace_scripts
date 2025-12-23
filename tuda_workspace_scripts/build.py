@@ -29,6 +29,7 @@ def build_packages(
     build_base: str = "build",
     install_base: str = "install",
     cmake_clean_cache: bool = False,
+    parallel_workers: int | None = None,
 ) -> int:
     os.chdir(workspace_root)
     packages = packages or []
@@ -43,6 +44,8 @@ def build_packages(
         arguments += ["--continue-on-error"]
     if cmake_clean_cache:
         arguments += ["--cmake-clean-cache"]
+    if parallel_workers is not None:
+        arguments += ["--parallel-workers", str(parallel_workers)]
 
     cmake_arguments = []
     if build_type is not None:
