@@ -473,17 +473,17 @@ def update(**_) -> bool:
         for msg in res.warnings:
             print_warn(msg)
 
-        # NEW: If current branch is stale on remote, offer checkout of remote mainline + deletion
+        # If current branch is stale on remote, offer checkout of remote mainline + pull + deletion
         if res.current_branch_deleted_remote and res.current_branch_remote:
             try:
                 repo = git.Repo(res.path)
-                current_branch = (
-                    repo.head.ref.name if not repo.head.is_detached else None
-                )
+                if repo.head.is_detached:
+                    continue
+
+                current_branch = repo.head.ref.name
                 mainline = _remote_head_mainline_ref(repo, res.current_branch_remote)
 
                 if current_branch and mainline:
-                    # mainline is like "origin/ros2" -> local branch name "ros2"
                     mainline_local = mainline.split("/", 1)[1]
                     msg = (
                         f"Current branch {current_branch} was deleted on the remote.\n"
@@ -499,31 +499,47 @@ def update(**_) -> bool:
                                 print(co.stderr.rstrip())
                             overall_ok = False
                         else:
-                            # Now that we're off the stale branch, offer deletion if safe
-                            can_del, warn = _is_deleted_branch(
-                                repo, repo.branches[current_branch]
+                            # After checkout: pull (ff-only) if upstream exists
+                            pull2 = launch_subprocess(
+                                ["git", "pull", "--ff-only"], cwd=res.path
                             )
-                            if warn:
-                                print_warn(warn)
-                            if can_del and confirm(
-                                f"Branch {current_branch} is stale and merged into {mainline}. Delete it now?"
-                            ):
-                                try:
-                                    repo.delete_head(current_branch, force=True)
-                                    print_info(f"  deleted {current_branch}")
-                                except Exception as exc:
-                                    print_error(
-                                        f"  failed to delete {current_branch}: {exc}"
-                                    )
-                                    overall_ok = False
+                            if pull2.returncode != 0:
+                                print_error(f"git pull failed on {mainline_local}:")
+                                if pull2.stderr.strip():
+                                    print(pull2.stderr.rstrip())
+                                overall_ok = False
+                            else:
+                                if pull2.stdout.strip():
+                                    print_info(pull2.stdout.rstrip())
+
+                            # Now that we're off the stale branch, offer deletion if safe
+                            if current_branch in repo.branches:
+                                can_del, warn = _is_deleted_branch(
+                                    repo, repo.branches[current_branch]
+                                )
+                                if warn:
+                                    print_warn(warn)
+                                if can_del and confirm(
+                                    f"Branch {current_branch} is stale and merged into {mainline}. Delete it now?"
+                                ):
+                                    try:
+                                        repo.delete_head(current_branch, force=True)
+                                        print_info(f"  deleted {current_branch}")
+                                    except Exception as exc:
+                                        print_error(
+                                            f"  failed to delete {current_branch}: {exc}"
+                                        )
+                                        overall_ok = False
                 elif current_branch and not mainline:
                     print_warn(
                         f"Current branch {current_branch} was deleted on the remote, but the remote "
                         f"'{res.current_branch_remote}' HEAD mainline could not be resolved. "
-                        "Not offering automatic checkout/deletion."
+                        "Not offering automatic checkout/pull/deletion."
                     )
             except Exception as exc:
-                print_error(f"Failed to offer checkout/deletion interaction: {exc}")
+                print_error(
+                    f"Failed to offer checkout/pull/deletion interaction: {exc}"
+                )
                 overall_ok = False
 
         # candidate branches for deletion
