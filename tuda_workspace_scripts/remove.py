@@ -51,7 +51,8 @@ def _repo_has_changes(repo_root: str, workspace_root: str) -> bool:
         repo = git.Repo(repo_root, search_parent_directories=False)
     except git.exc.InvalidGitRepositoryError:
         print_warn(f"{os.path.relpath(repo_root, workspace_root)} is not a git repo.")
-        return True
+        # Not a git repo, assume no changes - no local git history to check
+        return False
 
     try:
         stash_list = repo.git.stash("list")
@@ -226,13 +227,6 @@ def remove_packages(workspace_root: str, items: list[str]) -> int:
                 del repo_map[repo_root]
 
     for repo_root, repo_packages in repo_map.items():
-        repo_root_real = os.path.realpath(repo_root)
-        if not repo_root_real.startswith(src_root + os.path.sep):
-            print_error(
-                f"Refusing to remove non-src repository: {os.path.relpath(repo_root, workspace_root)}"
-            )
-            continue
-
         repo_rel = os.path.relpath(repo_root, workspace_root)
         print_info(f"About to clean {repo_rel}.")
         print("Includes the following packages:")
