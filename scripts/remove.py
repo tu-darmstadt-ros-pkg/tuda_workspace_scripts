@@ -17,12 +17,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         prog="remove", description="Remove packages and their repositories."
     )
-    packages_arg = parser.add_argument(
-        "packages",
+    items_arg = parser.add_argument(
+        "items",
         nargs="*",
         help="If specified only these packages or repositories are removed.",
     )
-    packages_arg.completer = CombinedPackageReposCompleter(workspace_root)
+    items_arg.completer = CombinedPackageReposCompleter(workspace_root)
     parser.add_argument(
         "--this",
         default=False,
@@ -38,20 +38,20 @@ if __name__ == "__main__":
         print_workspace_error()
         exit(1)
 
-    packages = args.packages or []
+    items = args.items or []
     if args.this:
-        packages = find_packages_in_directory(os.getcwd())
-        if len(packages) == 0:
+        items = find_packages_in_directory(os.getcwd())
+        if len(items) == 0:
             package = find_package_containing(os.getcwd())
-            packages = [package] if package else []
-        if len(packages) == 0:
+            items = [package] if package else []
+        if len(items) == 0:
             print_error(
                 "No package found in the current directory or containing the current directory!"
             )
             exit(1)
 
-    if len(packages) == 0:
-        print_error("No packages specified for removal.")
+    if len(items) == 0:
+        print_error("No packages or repositories specified for removal.")
         exit(1)
 
-    exit(remove_packages(workspace_root, packages))
+    exit(remove_packages(workspace_root, items))
