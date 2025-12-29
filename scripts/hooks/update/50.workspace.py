@@ -5,7 +5,7 @@ Update every git repository under the *src* directory of a ROS 2 workspace.
 * fetches & prunes all remotes
 * pulls the current branch (if it has an upstream)
 * detects local branches whose upstream was deleted **and** have no commits
-  unknown to any remote – offers to delete them
+  unknown to any remote - offers to delete them
 * performs the heavy work in parallel, prints results sequentially
 """
 from __future__ import annotations
@@ -92,11 +92,41 @@ def _has_commits_not_on_any_remote(repo: git.Repo, branch_name: str) -> bool:
         return False
 
 
+def _remote_head_mainline_ref(repo: git.Repo, remote_name: str) -> str | None:
+    """
+    Resolve the remote's configured mainline via refs/remotes/<remote>/HEAD.
+    Returns a ref like '<remote>/<branch>' (e.g. 'origin/ros2') or None.
+    """
+    head_ref = f"refs/remotes/{remote_name}/HEAD"
+    try:
+        sym = repo.git.symbolic_ref("-q", head_ref).strip()
+        if not sym:
+            return None
+        prefix = f"refs/remotes/{remote_name}/"
+        if sym.startswith(prefix):
+            return f"{remote_name}/{sym[len(prefix):]}"
+        return None
+    except git.exc.GitCommandError:
+        return None
+
+
+def _is_ancestor(repo: git.Repo, ancestor: str, descendant: str) -> bool:
+    """True iff ancestor is reachable from descendant."""
+    try:
+        repo.git.merge_base("--is-ancestor", ancestor, descendant)
+        return True
+    except git.exc.GitCommandError:
+        return False
+
+
 def _is_deleted_branch(repo: git.Repo, branch: git.Head) -> tuple[bool, str | None]:
     """
     Returns (deletable, warning)
 
-    * deletable → upstream vanished **and** branch is fully merged everywhere.
+    * deletable → upstream vanished **and** branch is safe to delete:
+      - not the current branch
+      - no commits unknown to any remote
+      - merged into remote's HEAD mainline (if resolvable)
     * warning   → explanatory message when *not* deletable (None if none).
     """
     tracking = branch.tracking_branch()
@@ -110,11 +140,18 @@ def _is_deleted_branch(repo: git.Repo, branch: git.Head) -> tuple[bool, str | No
 
         remote = repo.remotes[tracking.remote_name]
 
-        # Check if the tracking ref actually exists in the remote's refs
-        if tracking in remote.refs:
+        # Check if the tracking ref actually exists in the remote's refs (name-based)
+        remote_ref_names = {r.name for r in remote.refs}
+        if tracking.name in remote_ref_names:
             return False, None
 
-    except (IndexError, ValueError):  # remote itself lost
+    except (
+        KeyError,
+        IndexError,
+        ValueError,
+        AttributeError,
+        TypeError,
+    ):  # remote itself lost
         if not repo.head.is_detached and branch.name == repo.head.ref.name:
             warn = (
                 f"Remote '{tracking.remote_name}' for current branch {branch.name} "
@@ -137,6 +174,23 @@ def _is_deleted_branch(repo: git.Repo, branch: git.Head) -> tuple[bool, str | No
         )
         return False, warn
 
+    # only delete if merged into remote HEAD mainline
+    mainline = _remote_head_mainline_ref(repo, tracking.remote_name)
+    if mainline is None:
+        warn = (
+            f"Branch {branch.name} was deleted on the remote but remote "
+            f"'{tracking.remote_name}' HEAD mainline could not be resolved. "
+            "Skipping deletion."
+        )
+        return False, warn
+
+    if not _is_ancestor(repo, branch.name, mainline):
+        warn = (
+            f"Branch {branch.name} was deleted on the remote but is not merged into "
+            f"{mainline}. Skipping deletion."
+        )
+        return False, warn
+
     return True, None
 
 
@@ -153,6 +207,8 @@ class RepoResult:
         "stdout",
         "stderr",
         "error",
+        "current_branch_deleted_remote",
+        "current_branch_remote",
     )
 
     def __init__(
@@ -167,6 +223,8 @@ class RepoResult:
         stdout: str,
         stderr: str,
         error: str | None = None,
+        current_branch_deleted_remote: bool = False,
+        current_branch_remote: str | None = None,
     ):
         self.path = path
         self.branch = branch
@@ -178,11 +236,13 @@ class RepoResult:
         self.stdout = stdout
         self.stderr = stderr
         self.error = error
+        self.current_branch_deleted_remote = current_branch_deleted_remote
+        self.current_branch_remote = current_branch_remote
 
 
 # WORKER (PARALLEL)
 def process_repo(repo_path: Path) -> RepoResult:
-    """Fetch, optional pull, stale-branch detection – runs in a thread."""
+    """Fetch, optional pull, stale-branch detection - runs in a thread."""
     try:
         # 1. Subprocess Fetch (Side effect: updates refs on disk)
         fetch = launch_subprocess(["git", "fetch", "--all", "--prune"], cwd=repo_path)
@@ -194,7 +254,16 @@ def process_repo(repo_path: Path) -> RepoResult:
 
         if not repo.head.is_valid():
             return RepoResult(
-                repo_path, "no-HEAD", True, False, True, [], [], "", "", None
+                repo_path,
+                "no-HEAD",
+                fetch_ok,
+                False,
+                True,
+                [],
+                [],
+                fetch.stdout or "",
+                fetch.stderr or "",
+                None,
             )
 
         branch_name = (
@@ -232,7 +301,32 @@ def process_repo(repo_path: Path) -> RepoResult:
         # 4. Stale-branch detection
         deletable: list[str] = []
         warnings: list[str] = []
+        current_branch_deleted_remote = False
+        current_branch_remote: str | None = None
+
         if fetch_ok:
+            # Detect "current branch deleted on remote" specifically, so we can offer an interaction later.
+            if not repo.head.is_detached:
+                head_branch = repo.head.ref
+                tracking = head_branch.tracking_branch()
+                if tracking is not None:
+                    remote_name = getattr(tracking, "remote_name", None)
+                    if remote_name:
+                        current_branch_remote = remote_name
+                        try:
+                            remote = repo.remotes[remote_name]
+                            remote_ref_names = {r.name for r in remote.refs}
+                            if tracking.name not in remote_ref_names:
+                                current_branch_deleted_remote = True
+                        except (
+                            KeyError,
+                            IndexError,
+                            ValueError,
+                            AttributeError,
+                            TypeError,
+                        ):
+                            pass
+
             for br in repo.branches:
                 can_del, warn = _is_deleted_branch(repo, br)
                 if can_del:
@@ -250,6 +344,8 @@ def process_repo(repo_path: Path) -> RepoResult:
             warnings=warnings,
             stdout=(fetch.stdout or "") + pull_out,
             stderr=(fetch.stderr or "") + pull_err,
+            current_branch_deleted_remote=current_branch_deleted_remote,
+            current_branch_remote=current_branch_remote,
         )
 
     except Exception as exc:  # keep other repos going
@@ -273,9 +369,6 @@ def collect_repos(ws_src: Path) -> list[Path]:
 
 # MAIN
 def update(**_) -> bool:
-    print_header(
-        "Updating ROS 2 workspace git repositories"
-    )  # TODO: remove in production
     ws_root = get_workspace_root()
     if ws_root is None:
         print_workspace_error()
@@ -357,7 +450,7 @@ def update(**_) -> bool:
 
         # fetch status
         if not res.fetch_ok:
-            print_error("git fetch failed – repository might be out of date:")
+            print_error("git fetch failed - repository might be out of date:")
             if res.stderr.strip():
                 print(res.stderr.rstrip())
             overall_ok = False
@@ -374,11 +467,64 @@ def update(**_) -> bool:
                 if res.stdout.strip():
                     print_info(res.stdout.rstrip())
         else:
-            print_info("skipped pull – current branch has no upstream")
+            print_info("skipped pull - current branch has no upstream")
 
         # branch-specific warnings
         for msg in res.warnings:
             print_warn(msg)
+
+        # NEW: If current branch is stale on remote, offer checkout of remote mainline + deletion
+        if res.current_branch_deleted_remote and res.current_branch_remote:
+            try:
+                repo = git.Repo(res.path)
+                current_branch = (
+                    repo.head.ref.name if not repo.head.is_detached else None
+                )
+                mainline = _remote_head_mainline_ref(repo, res.current_branch_remote)
+
+                if current_branch and mainline:
+                    # mainline is like "origin/ros2" -> local branch name "ros2"
+                    mainline_local = mainline.split("/", 1)[1]
+                    msg = (
+                        f"Current branch {current_branch} was deleted on the remote.\n"
+                        f"Do you want to checkout the remote mainline branch '{mainline_local}' now?"
+                    )
+                    if confirm(msg):
+                        co = launch_subprocess(
+                            ["git", "checkout", mainline_local], cwd=res.path
+                        )
+                        if co.returncode != 0:
+                            print_error(f"Failed to checkout {mainline_local}:")
+                            if co.stderr.strip():
+                                print(co.stderr.rstrip())
+                            overall_ok = False
+                        else:
+                            # Now that we're off the stale branch, offer deletion if safe
+                            can_del, warn = _is_deleted_branch(
+                                repo, repo.branches[current_branch]
+                            )
+                            if warn:
+                                print_warn(warn)
+                            if can_del and confirm(
+                                f"Branch {current_branch} is stale and merged into {mainline}. Delete it now?"
+                            ):
+                                try:
+                                    repo.delete_head(current_branch, force=True)
+                                    print_info(f"  deleted {current_branch}")
+                                except Exception as exc:
+                                    print_error(
+                                        f"  failed to delete {current_branch}: {exc}"
+                                    )
+                                    overall_ok = False
+                elif current_branch and not mainline:
+                    print_warn(
+                        f"Current branch {current_branch} was deleted on the remote, but the remote "
+                        f"'{res.current_branch_remote}' HEAD mainline could not be resolved. "
+                        "Not offering automatic checkout/deletion."
+                    )
+            except Exception as exc:
+                print_error(f"Failed to offer checkout/deletion interaction: {exc}")
+                overall_ok = False
 
         # candidate branches for deletion
         if res.deletable:
