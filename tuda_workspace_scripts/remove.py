@@ -31,14 +31,14 @@ def _repo_root_from_package_path(package_path: str, workspace_root: str) -> str 
     return None
 
 
-def _repo_root_from_input(target: str, workspace_root: str) -> str | None:
-    if os.path.isdir(target):
-        return os.path.realpath(target)
-    if os.path.isabs(target):
+def _repo_root_from_item(item: str, workspace_root: str) -> str | None:
+    if os.path.isdir(item):
+        return os.path.realpath(item)
+    if os.path.isabs(item):
         return None
     candidates = [
-        os.path.join(workspace_root, "src", target),
-        os.path.join(workspace_root, target),
+        os.path.join(workspace_root, "src", item),
+        os.path.join(workspace_root, item),
     ]
     for candidate in candidates:
         if os.path.isdir(candidate):
@@ -149,57 +149,57 @@ def _repo_has_changes(repo_root: str, workspace_root: str) -> bool:
     return True
 
 
-def remove_packages(workspace_root: str, packages: list[str]) -> int:
+def remove_packages(workspace_root: str, items: list[str]) -> int:
     if workspace_root is None:
         print_error("No workspace configured!")
         return 1
 
-    if not packages:
-        print_error("No packages specified for removal.")
+    if not items:
+        print_error("No packages or repositories specified for removal.")
         return 1
 
-    packages_unique = []
+    items_unique = []
     seen = set()
-    for package in packages:
-        if package not in seen:
-            packages_unique.append(package)
-            seen.add(package)
+    for item in items:
+        if item not in seen:
+            items_unique.append(item)
+            seen.add(item)
 
     repo_map: dict[str, list[str]] = {}
     selected_repo_roots: set[str] = set()
-    missing_targets = []
-    for package in packages_unique:
-        package_path = get_package_path(package, workspace_root)
+    missing_items = []
+    for item in items_unique:
+        package_path = get_package_path(item, workspace_root)
         if package_path is not None:
             repo_root = _repo_root_from_package_path(package_path, workspace_root)
             if repo_root is None:
-                print_error(f"Failed to locate repository for {package}.")
+                print_error(f"Failed to locate repository for {item}.")
                 return 1
             repo_root = os.path.realpath(repo_root)
             if repo_root not in selected_repo_roots:
                 repo_packages = repo_map.setdefault(repo_root, [])
-                if package not in repo_packages:
-                    repo_packages.append(package)
+                if item not in repo_packages:
+                    repo_packages.append(item)
             continue
 
-        repo_root = _repo_root_from_input(package, workspace_root)
+        repo_root = _repo_root_from_item(item, workspace_root)
         if repo_root is not None:
             repo_root = os.path.realpath(repo_root)
             selected_repo_roots.add(repo_root)
             repo_map[repo_root] = find_packages_in_directory(repo_root)
             continue
 
-        missing_targets.append(package)
+        missing_items.append(item)
 
-    if missing_targets:
-        print_error(f"Packages or repositories not found: {', '.join(missing_targets)}")
+    if missing_items:
+        print_error(f"Packages or repositories not found: {', '.join(missing_items)}")
         return 1
 
     src_root = os.path.realpath(os.path.join(workspace_root, "src"))
     for repo_root in list(repo_map.keys()):
         if repo_root not in selected_repo_roots:
             repo_packages = find_packages_in_directory(repo_root)
-            extra_packages = [p for p in repo_packages if p not in packages_unique]
+            extra_packages = [p for p in repo_packages if p not in items_unique]
             if extra_packages:
                 repo_rel = os.path.relpath(repo_root, workspace_root)
                 if not confirm(
@@ -234,6 +234,10 @@ def remove_packages(workspace_root: str, packages: list[str]) -> int:
             continue
 
         repo_rel = os.path.relpath(repo_root, workspace_root)
+        print_info(f"About to clean {repo_rel}.")
+        print("Includes the following packages:")
+        for package in sorted(repo_packages):
+            print(f"- {package}")
         if not confirm(f"Are you sure you want to clean {repo_rel}?"):
             print_info(f"Skipping repository {repo_rel}.")
             continue
