@@ -42,22 +42,45 @@ except ImportError:
 
 # HELPERS
 def launch_subprocess(cmd: list[str] | tuple[str, ...], cwd: str | Path):
-    """Run *cmd* in *cwd*, forwarding Ctrl-C to the child process group."""
+    """
+    Run *cmd* in *cwd*, forwarding Ctrl-C to the child process group.
+    Sets GIT_TERMINAL_PROMPT=0 to prevent hanging on missing credentials.
+    """
+    # Prevent git from hanging by asking for credentials in a background thread
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+
+    # Use Popen to allow proper cleanup on KeyboardInterrupt
     try:
-        return subprocess.run(
+        with subprocess.Popen(
             cmd,
             cwd=str(cwd),
-            check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             start_new_session=True,
-        )
+            env=env,
+        ) as process:
+            try:
+                stdout, stderr = process.communicate()
+            except KeyboardInterrupt:
+                # Forward the interrupt to the child process group
+                process.send_signal(signal.SIGINT)
+                # Wait briefly for it to exit, otherwise let the context manager kill it
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                raise
+
+            return subprocess.CompletedProcess(
+                process.args, process.returncode, stdout, stderr
+            )
     except KeyboardInterrupt:
         raise
 
 
-def _has_unpushed_commits(repo: git.Repo, branch_name: str) -> bool:
+def _has_commits_not_on_any_remote(repo: git.Repo, branch_name: str) -> bool:
     """True iff *branch_name* contains commits unknown to **any** remote."""
     try:
         cnt = int(
@@ -107,7 +130,7 @@ def _is_deleted_branch(repo: git.Repo, branch: git.Head) -> tuple[bool, str | No
         )
         return False, warn
 
-    if _has_unpushed_commits(repo, branch.name):
+    if _has_commits_not_on_any_remote(repo, branch.name):
         warn = (
             f"Branch {branch.name} was deleted on the remote but still has "
             "commits that are not present on any remote."
@@ -187,12 +210,24 @@ def process_repo(repo_path: Path) -> RepoResult:
 
         if not repo.head.is_detached:
             upstream = repo.head.ref.tracking_branch()
-            if upstream is not None and upstream in repo.refs:
-                pull_attempted = True
-                pull = launch_subprocess(["git", "pull", "--ff-only"], cwd=repo_path)
-                pull_ok = pull.returncode == 0
-                pull_out = pull.stdout or ""
-                pull_err = pull.stderr or ""
+
+            if upstream is not None:
+                # Verify that the upstream reference actually exists / is resolvable
+                # (it might have been pruned)
+                try:
+                    repo.git.rev_parse(upstream.name)
+                    upstream_exists = True
+                except git.exc.GitCommandError:
+                    upstream_exists = False
+
+                if upstream_exists:
+                    pull_attempted = True
+                    pull = launch_subprocess(
+                        ["git", "pull", "--ff-only"], cwd=repo_path
+                    )
+                    pull_ok = pull.returncode == 0
+                    pull_out = pull.stdout or ""
+                    pull_err = pull.stderr or ""
 
         # 4. Stale-branch detection
         deletable: list[str] = []
@@ -227,7 +262,10 @@ def collect_repos(ws_src: Path) -> list[Path]:
     repos: list[Path] = []
     for root, dirs, _ in os.walk(ws_src):
         root_p = Path(root)
-        if (root_p / ".git").is_dir():
+        git_entry = root_p / ".git"
+
+        # Check for directory (standard repo) OR file (submodule/worktree)
+        if git_entry.is_dir() or git_entry.is_file():
             repos.append(root_p)
             dirs[:] = []  # don’t recurse into repo
     return repos
@@ -235,6 +273,9 @@ def collect_repos(ws_src: Path) -> list[Path]:
 
 # MAIN
 def update(**_) -> bool:
+    print_header(
+        "Updating ROS 2 workspace git repositories"
+    )  # TODO: remove in production
     ws_root = get_workspace_root()
     if ws_root is None:
         print_workspace_error()
@@ -256,14 +297,15 @@ def update(**_) -> bool:
     cols = shutil.get_terminal_size((80, 20)).columns
 
     def _progress(idx: int):
+        safe_total = max(total, 1)
         bar_len = max(10, min(50, cols - 30))
-        filled = int(bar_len * idx / total)
+        filled = int(bar_len * idx / safe_total)
         bar = (
             ("=" * filled + ">" + " " * (bar_len - filled - 1))
             if idx < total
             else "=" * bar_len
         )
-        percent = (idx * 100) // total
+        percent = (idx * 100) // safe_total
         elapsed = time.monotonic() - _BAR_START
         print(
             f"\r[{bar}] {percent:3d}% {idx}/{total} | {elapsed:4.0f}s",
@@ -275,7 +317,12 @@ def update(**_) -> bool:
     done = 0
     _progress(done)
 
-    max_workers = min(32, (os.cpu_count() or 1) * 2)
+    # For I/O-bound git operations, allow more threads than CPU cores,
+    # but keep a sensible cap.
+    cpu_count = os.cpu_count() or 1
+    max_workers = min(32, cpu_count * 4)
+
+    fut_map = {}
     try:
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             fut_map = {pool.submit(process_repo, p): p for p in repos}
@@ -285,11 +332,19 @@ def update(**_) -> bool:
                 _progress(done)
     except KeyboardInterrupt:
         print_error("Update interrupted by user. Cancelling outstanding tasks…")
+        # Cancel any futures that have not yet started running
+        for fut in fut_map:
+            fut.cancel()
         return False
     finally:
         print()  # newline after progress bar
 
     # SEQUENTIAL PHASE
+    # NOTE: We intentionally collect all RepoResult objects and print them in
+    # a deterministic, path-sorted order instead of streaming output directly
+    # from the worker threads. The progress bar above provides live feedback
+    # while the parallel work is running, and printing sequentially here keeps
+    # the CLI output stable and easier to scan across runs.
     overall_ok = True
     for res in sorted(results, key=lambda r: r.path):
         rel = res.path.relative_to(ws_src)
