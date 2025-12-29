@@ -90,6 +90,26 @@ def get_packages_in_workspace(workspace_path=None):
     return find_packages_in_directory(os.path.join(workspace_path, "src"))
 
 
+def get_repos_in_workspace(workspace_path=None):
+    """
+    Looks for git repositories in the src folder of a workspace.
+    :param workspace_path: Path to the workspace root (The parent directory of the src folder).
+        If None will use get_workspace_root() to try to find it.
+    """
+    if workspace_path is None:
+        workspace_path = get_workspace_root()
+        if workspace_path is None:
+            return []
+    repos = []
+    src_path = os.path.join(workspace_path, "src")
+    for dirpath, dirnames, _ in os.walk(src_path, followlinks=True):
+        if ".git" in dirnames:
+            repos.append(dirpath)
+            dirnames.remove(".git")
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+    return repos
+
+
 def get_package_path(package_name, workspace_path=None):
     """
     :param package_name: The name of the package to find.
@@ -171,6 +191,25 @@ class PackageChoicesCompleter:
         if self.workspace_path is None:
             return []
         return get_packages_in_workspace(self.workspace_path)
+
+
+class CombinedPackageReposCompleter:
+    """
+    Looks for packages and repositories in the src subdirectory of the workspace located at workspace_path.
+    """
+
+    def __init__(self, workspace_path):
+        self.workspace_path = workspace_path
+
+    def __call__(self, **kwargs):
+        if self.workspace_path is None:
+            return []
+        packages = get_packages_in_workspace(self.workspace_path)
+        repos = []
+        for repo_path in get_repos_in_workspace(self.workspace_path):
+            repo_name = os.path.basename(repo_path)
+            repos.append(repo_name)
+        return packages + repos
 
 
 if __name__ == "__main__":
