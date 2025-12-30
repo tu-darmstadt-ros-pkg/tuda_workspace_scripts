@@ -1,5 +1,7 @@
-import os
 import shutil
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import List, Dict, Optional, Set
 
 from .build import clean_packages
 from .print import Colors, confirm, print_error, print_info, print_warn, print_color
@@ -7,245 +9,350 @@ from .workspace import find_packages_in_directory, get_package_path
 
 try:
     import git
+    from git import Repo
 except ImportError:
-    print_error(
-        "GitPython is required! Install using 'pip3 install --user gitpython' or 'apt install python3-git'"
-    )
+    print_error("GitPython is required! Install using 'pip install gitpython'")
     raise
 
 
-def _repo_root_from_package_path(package_path: str, workspace_root: str) -> str | None:
-    try:
-        repo = git.Repo(package_path, search_parent_directories=True)
-        return repo.working_tree_dir
-    except git.exc.InvalidGitRepositoryError:
-        src_root = os.path.realpath(os.path.join(workspace_root, "src"))
-        path = os.path.realpath(package_path)
-        while path and path != src_root:
-            parent = os.path.realpath(os.path.dirname(path))
-            if parent == src_root:
-                return path
-            if parent == path:
-                break
-            path = parent
-    return None
+@dataclass
+class RepoStatus:
+    """Structured container for repository status."""
+
+    rel_path: str
+    branch: str
+    is_git: bool = False
+    has_changes: bool = False
+    untracked_count: int = 0
+    stash_count: int = 0
+
+    # Detailed lists for display
+    unpushed_branches: List[str] = field(default_factory=list)
+    local_only_branches: List[str] = field(default_factory=list)
+    deleted_upstream_branches: List[str] = field(default_factory=list)
+    changes_summary: List[str] = field(default_factory=list)
+
+    # For safety checks
+    is_clean: bool = True
 
 
-def _repo_root_from_item(item: str, workspace_root: str) -> str | None:
-    if os.path.isdir(item):
-        return os.path.realpath(item)
-    if os.path.isabs(item):
+def _get_repo_root(path: Path, workspace_src: Path) -> Optional[Path]:
+    """
+    Find the git root for a path, but stop searching if we hit the workspace src root.
+    This prevents detecting a git repo in the user's home directory by mistake.
+    """
+    current = path.resolve()
+    workspace_src = workspace_src.resolve()
+
+    # Safety check: ensure we are actually inside the workspace src
+    if not current.is_relative_to(workspace_src):
         return None
-    candidates = [
-        os.path.join(workspace_root, "src", item),
-        os.path.join(workspace_root, item),
-    ]
-    for candidate in candidates:
-        if os.path.isdir(candidate):
-            return os.path.realpath(candidate)
-    return None
 
-
-def _repo_has_changes(repo_root: str, workspace_root: str) -> bool:
     try:
-        repo = git.Repo(repo_root, search_parent_directories=False)
+        # Ask git where the root is directly (fastest method)
+        # We use strict boundaries to ensure we don't jump out of the workspace
+        repo = git.Repo(current, search_parent_directories=True)
+        repo_root = Path(repo.working_tree_dir).resolve()
+
+        # If the found repo root is OUTSIDE our workspace src, ignore it.
+        # This handles the case where user has a .git in /home/user/
+        if repo_root != workspace_src and not workspace_src.is_relative_to(repo_root):
+            # The workspace is inside the repo (nested), or repo is completely outside
+            if repo_root.is_relative_to(workspace_src) or repo_root == workspace_src:
+                return repo_root
+            # If the repo root is higher up than src, we treat this package as not-git-managed
+            return None
+
+        return repo_root
+    except (git.exc.InvalidGitRepositoryError, git.exc.NoSuchPathError):
+        return None
+
+
+def _analyze_changes(repo: Repo) -> (List[str], int):
+    """
+    Summarize file changes (staged and unstaged).
+    Returns a list of strings describing changes and total count.
+    """
+    summary = []
+    total_modifications = 0
+
+    # Check index (staged) and working tree (unstaged)
+    # R=True finds renames
+    for diff_list in [repo.index.diff("HEAD"), repo.index.diff(None)]:
+        for diff in diff_list:
+            total_modifications += 1
+            if diff.change_type == "M":
+                summary.append(f"Modified: {diff.a_path}")
+            elif diff.change_type == "A":
+                summary.append(f"Added: {diff.a_path}")
+            elif diff.change_type == "D":
+                summary.append(f"Deleted: {diff.a_path}")
+            elif diff.change_type == "R":
+                summary.append(f"Renamed: {diff.a_path} -> {diff.b_path}")
+            else:
+                summary.append(f"{diff.change_type}: {diff.a_path}")
+
+    return summary, total_modifications
+
+
+def _collect_repo_status(
+    repo_path: Path, workspace_root: Path, fetch: bool
+) -> RepoStatus:
+    rel_path = str(repo_path.relative_to(workspace_root))
+
+    try:
+        repo = Repo(repo_path)
     except git.exc.InvalidGitRepositoryError:
-        print_warn(f"{os.path.relpath(repo_root, workspace_root)} is not a git repo.")
-        # Not a git repo, assume no changes - no local git history to check
-        return False
+        return RepoStatus(rel_path=rel_path, branch="unknown", is_git=False)
 
+    # 1. Basic Info
     try:
-        stash_list = repo.git.stash("list")
-        changes = list(repo.index.diff(None))
-    except git.exc.GitCommandError as e:
-        print_error(
-            f"Failed to obtain changes for {os.path.relpath(repo_root, workspace_root)}: {e}"
-        )
-        return True
+        if repo.head.is_detached:
+            branch_name = f"detached ({repo.head.commit.hexsha[:7]})"
+        else:
+            branch_name = repo.active_branch.name
+    except ValueError:
+        branch_name = "empty/unknown"
 
-    try:
-        changes += list(repo.index.diff("HEAD", R=True))
-    except git.BadName:
-        pass
+    # 2. Fetch if requested
+    if fetch:
+        for remote in repo.remotes:
+            try:
+                remote.fetch()
+            except git.exc.GitCommandError as e:
+                print_warn(f"Fetch failed for {remote.name} in {rel_path}: {e}")
 
-    untracked = repo.untracked_files
-    unpushed_branches = []
-    local_branches = []
-    deleted_branches = []
+    # 3. Analyze Branches
+    unpushed = []
+    local_only = []
+    deleted_upstream = []
+
     for branch in repo.branches:
         tracking = branch.tracking_branch()
-        if tracking is None:
-            local_branches.append(branch)
+        if not tracking:
+            local_only.append(branch.name)
             continue
+
         if not tracking.is_valid():
-            deleted_branches.append(branch)
+            deleted_upstream.append(branch.name)
             continue
+
+        # Check for unpushed commits using rev-list (much faster than iter_commits)
         try:
-            if any(
-                True for _ in repo.iter_commits(f"{branch.name}@{{u}}..{branch.name}")
-            ):
-                unpushed_branches.append(branch)
-        except git.exc.GitCommandError as e:
-            print_error(
-                f"{os.path.relpath(repo_root, workspace_root)} has error on branch {branch.name}: {e}"
+            # count commits that are reachable from branch but not from tracking
+            commits_ahead = repo.git.rev_list(
+                "--count", f"{tracking.name}..{branch.name}"
             )
-            return True
+            if int(commits_ahead) > 0:
+                unpushed.append(branch.name)
+        except git.exc.GitCommandError:
+            pass
+
+    # 4. Changes and Stashes
+    try:
+        stash_count = (
+            len(repo.git.stash("list").splitlines()) if repo.git.stash("list") else 0
+        )
+    except git.exc.GitCommandError:
+        stash_count = 0
+
+    untracked_files = repo.untracked_files
+    changes_summary, mod_count = _analyze_changes(repo)
 
     has_changes = (
-        any(untracked)
-        or bool(stash_list)
-        or any(unpushed_branches)
-        or any(local_branches)
-        or any(deleted_branches)
-        or any(changes)
+        bool(untracked_files)
+        or bool(stash_count)
+        or bool(unpushed)
+        or bool(local_only)
+        or bool(deleted_upstream)
+        or mod_count > 0
     )
 
-    if not has_changes:
-        return False
-
-    if not repo.head.is_valid():
-        branch_name = "unknown"
-    elif repo.head.is_detached:
-        branch_name = f"detached at {repo.head.commit}"
-    else:
-        branch_name = repo.head.ref.name
-
-    print_info(
-        f"{os.path.relpath(repo_root, workspace_root)} {Colors.LPURPLE}({branch_name})"
+    return RepoStatus(
+        rel_path=rel_path,
+        branch=branch_name,
+        is_git=True,
+        has_changes=has_changes,
+        untracked_count=len(untracked_files),
+        stash_count=stash_count,
+        unpushed_branches=unpushed,
+        local_only_branches=local_only,
+        deleted_upstream_branches=deleted_upstream,
+        changes_summary=changes_summary,
+        is_clean=not has_changes,
     )
-    for branch in unpushed_branches:
-        print_color(Colors.RED, f"  Unpushed commits on branch {branch}!")
-    for branch in local_branches:
-        print_color(Colors.LRED, f"  Local branch with no upstream: {branch}")
-    for branch in deleted_branches:
-        print_color(Colors.LRED, f"  Local branch with deleted upstream: {branch}")
-    if bool(stash_list):
-        print_color(Colors.LCYAN, "  Stashed changes")
-    for item in changes:
-        if item.change_type.startswith("M"):
-            print_color(Colors.ORANGE, f"  Modified: {item.a_path}")
-        elif item.change_type.startswith("D"):
-            print_color(Colors.RED, f"  Deleted: {item.a_path}")
-        elif item.change_type.startswith("R"):
-            print_color(Colors.GREEN, f"  Renamed: {item.a_path} -> {item.b_path}")
-        elif item.change_type.startswith("A"):
-            print_color(Colors.GREEN, f"  Added: {item.a_path}")
-        elif item.change_type.startswith("U"):
-            print_error(f"  Unmerged: {item.a_path}")
-        elif item.change_type.startswith("C"):
-            print_color(Colors.GREEN, f"  Copied: {item.a_path} -> {item.b_path}")
-        elif item.change_type.startswith("T"):
-            print_color(Colors.ORANGE, f"  Type changed: {item.a_path}")
-        else:
-            print_color(
-                Colors.RED,
-                f"  Unhandled change type '{item.change_type}': {item.a_path}",
-            )
-    if len(untracked) < 10:
-        for file in untracked:
-            print_color(Colors.LGRAY, f"  Untracked: {file}")
+
+
+def _print_status_report(status: RepoStatus, packages: List[str]):
+    print_info(f"Repo: {status.rel_path} ({status.branch})")
+
+    if not status.is_git:
+        print_warn("  [!] Not a git repository")
+        return
+
+    labels = []
+    if status.is_clean:
+        labels.append("Clean")
     else:
-        print_color(Colors.LGRAY, f"  {len(untracked)} untracked files.")
-    print("")
-    return True
+        if status.unpushed_branches:
+            labels.append("Unpushed commits")
+        if status.local_only_branches:
+            labels.append("Local-only branches")
+        if status.deleted_upstream_branches:
+            labels.append("Deleted upstream")
+        if status.stash_count:
+            labels.append("Stashed changes")
+        if status.changes_summary or status.untracked_count:
+            labels.append("Working tree dirty")
+
+    print_info(f"Status: {', '.join(labels)}")
+
+    # Details
+    if status.has_changes:
+        for b in status.unpushed_branches:
+            print_color(Colors.RED, f"  Unpushed: {b}")
+        for b in status.local_only_branches:
+            print_color(Colors.LRED, f"  No Upstream: {b}")
+        for b in status.deleted_upstream_branches:
+            print_color(Colors.YELLOW, f"  Upstream Deleted: {b}")
+        for change in status.changes_summary:
+            print_color(Colors.ORANGE, f"  {change}")
+        if status.untracked_count:
+            print_color(Colors.LGRAY, f"  {status.untracked_count} untracked files")
+
+    print("Packages in this repo:")
+    for p in sorted(packages):
+        print(f"  - {p}")
 
 
-def remove_packages(workspace_root: str, items: list[str]) -> int:
-    if workspace_root is None:
+def remove_packages(
+    workspace_root_str: str, items: List[str], fetch_remotes: bool = False
+) -> int:
+    if not workspace_root_str:
         print_error("No workspace configured!")
         return 1
 
+    workspace_root = Path(workspace_root_str).resolve()
+    src_root = workspace_root / "src"
+
     if not items:
-        print_error("No packages or repositories specified for removal.")
+        print_error("No packages specified.")
         return 1
 
-    items_unique = []
-    seen = set()
-    for item in items:
-        if item not in seen:
-            items_unique.append(item)
-            seen.add(item)
+    # Deduplicate items
+    items = list(dict.fromkeys(items))
 
-    repo_map: dict[str, list[str]] = {}
-    selected_repo_roots: set[str] = set()
+    repo_map: Dict[Path, List[str]] = {}
+    repos_explicitly_selected: Set[Path] = set()
     missing_items = []
-    for item in items_unique:
-        package_path = get_package_path(item, workspace_root)
-        if package_path is not None:
-            repo_root = _repo_root_from_package_path(package_path, workspace_root)
-            if repo_root is None:
-                print_error(f"Failed to locate repository for {item}.")
+
+    # 1. Resolve Items to Repositories
+    for item in items:
+        # Check if item is a package name
+        pkg_path_str = get_package_path(item, str(workspace_root))
+
+        if pkg_path_str:
+            repo_root = _get_repo_root(Path(pkg_path_str), src_root)
+            if not repo_root:
+                print_error(
+                    f"Package '{item}' is not in a recognized git repo within src."
+                )
                 return 1
-            repo_root = os.path.realpath(repo_root)
-            if repo_root not in selected_repo_roots:
-                repo_packages = repo_map.setdefault(repo_root, [])
-                if item not in repo_packages:
-                    repo_packages.append(item)
-            continue
 
-        repo_root = _repo_root_from_item(item, workspace_root)
-        if repo_root is not None:
-            repo_root = os.path.realpath(repo_root)
-            selected_repo_roots.add(repo_root)
-            repo_map[repo_root] = find_packages_in_directory(repo_root)
-            continue
+            if repo_root not in repo_map:
+                repo_map[repo_root] = []
+            if item not in repo_map[repo_root]:
+                repo_map[repo_root].append(item)
 
-        missing_items.append(item)
+        else:
+            # Check if item is a directory path (relative to ws or src)
+            candidate = workspace_root / item
+            candidate_src = src_root / item
+
+            found_repo = None
+            if candidate.is_dir():
+                found_repo = candidate.resolve()
+            elif candidate_src.is_dir():
+                found_repo = candidate_src.resolve()
+
+            if found_repo:
+                # Verify it's actually a repo or inside one
+                real_repo = _get_repo_root(found_repo, src_root)
+                if real_repo:
+                    repos_explicitly_selected.add(real_repo)
+                    # We will populate packages later
+                    if real_repo not in repo_map:
+                        repo_map[real_repo] = []
+                else:
+                    print_error(f"Path '{item}' is not a git repository.")
+            else:
+                missing_items.append(item)
 
     if missing_items:
-        print_error(f"Packages or repositories not found: {', '.join(missing_items)}")
+        print_error(f"Not found: {', '.join(missing_items)}")
         return 1
 
-    src_root = os.path.realpath(os.path.join(workspace_root, "src"))
-    for repo_root in list(repo_map.keys()):
-        if repo_root not in selected_repo_roots:
-            repo_packages = find_packages_in_directory(repo_root)
-            extra_packages = [p for p in repo_packages if p not in items_unique]
-            if extra_packages:
-                repo_rel = os.path.relpath(repo_root, workspace_root)
-                if not confirm(
-                    f"Repository '{repo_rel}' contains additional packages "
-                    f"not requested for removal: {', '.join(extra_packages)}. "
-                    "Remove entire repository anyway?"
-                ):
-                    print_info(f"Skipping repository {repo_rel}.")
-                    del repo_map[repo_root]
-                    continue
-            repo_map[repo_root] = repo_packages
-        else:
-            repo_map[repo_root] = find_packages_in_directory(repo_root)
+    # 2. Check for "Partial" Repo Removals
+    # If user asked to remove pkg A, but Repo contains A and B, we must ask.
+    final_repos_to_process = []
 
-    for repo_root in list(repo_map.keys()):
-        if _repo_has_changes(repo_root, workspace_root):
-            if not confirm(
-                "Repository has local changes, stashes, or unpushed commits. "
-                "Remove anyway (brute-force)?"
-            ):
-                print_info(
-                    f"Skipping repository {os.path.relpath(repo_root, workspace_root)}."
-                )
-                del repo_map[repo_root]
+    for repo_root, requested_pkgs in repo_map.items():
+        all_pkgs_in_repo = find_packages_in_directory(str(repo_root))
 
-    for repo_root, repo_packages in repo_map.items():
-        repo_rel = os.path.relpath(repo_root, workspace_root)
-        print_info(f"About to clean {repo_rel}.")
-        print("Includes the following packages:")
-        for package in sorted(repo_packages):
-            print(f"- {package}")
-        if not confirm(f"Are you sure you want to clean {repo_rel}?"):
-            print_info(f"Skipping repository {repo_rel}.")
+        # If the user selected the REPO path explicitly, they imply deleting everything.
+        if repo_root in repos_explicitly_selected:
+            final_repos_to_process.append((repo_root, all_pkgs_in_repo))
             continue
 
-        if not repo_packages:
-            print_warn(f"No packages found in {repo_rel}. Skipping cleanup.")
+        # Otherwise, check if they missed any packages
+        extra_pkgs = [p for p in all_pkgs_in_repo if p not in requested_pkgs]
+
+        if extra_pkgs:
+            repo_rel = repo_root.relative_to(workspace_root)
+            print_warn(
+                f"Repository '{repo_rel}' contains other packages: {', '.join(extra_pkgs)}"
+            )
+            if not confirm("Remove the entire repository and all these packages?"):
+                print_info("Skipping.")
+                continue
+
+        final_repos_to_process.append((repo_root, all_pkgs_in_repo))
+
+    # 3. Execution Phase
+    for repo_root, packages in final_repos_to_process:
+        repo_rel = repo_root.relative_to(workspace_root)
+
+        # Safety: Final check that we are deleting something inside src
+        if not repo_root.is_relative_to(src_root):
+            print_error(f"SAFETY GUARD: Refusing to delete {repo_root} (outside src)")
             continue
 
-        if not clean_packages(workspace_root, repo_packages, force=True):
-            print_error(f"Failed to clean build/install for {repo_rel}.")
+        status = _collect_repo_status(repo_root, workspace_root, fetch_remotes)
+        _print_status_report(status, packages)
+
+        has_uncommitted = bool(status.changes_summary) or status.untracked_count > 0
+        has_unpushed = bool(status.unpushed_branches) or bool(
+            status.local_only_branches
+        )
+        if has_uncommitted or has_unpushed:
+            print_error(
+                "WARNING: repository has uncommitted changes or unpushed commits."
+            )
+            if not confirm(f"Proceed with deletion of {repo_rel} anyway?"):
+                continue
+        if not confirm(f"DELETE {repo_rel}?"):
             continue
 
-        print_info(f"Removing source at {repo_rel}...")
-        shutil.rmtree(repo_root)
-        print_info(f"Removed {repo_rel}.")
+        # Clean build artifacts first -> install and build folders
+        if packages:
+            if not clean_packages(str(workspace_root), packages, force=True):
+                print_error("Failed to clean build artifacts.")
+
+        print_info(f"Deleting {repo_rel}...")
+        try:
+            shutil.rmtree(repo_root)
+            print_info("Deleted.")
+        except OSError as e:
+            print_error(f"Failed to delete {repo_root}: {e}")
 
     return 0

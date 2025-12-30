@@ -29,6 +29,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Remove the package(s) in the current directory.",
     )
+    parser.add_argument(
+        "--fetch",
+        default=False,
+        action="store_true",
+        help="Fetch remotes before checking mainline merge state.",
+    )
 
     completer = SmartCompletionFinder(parser)
     completer(parser)
@@ -54,4 +60,4 @@ if __name__ == "__main__":
         print_error("No packages or repositories specified for removal.")
         exit(1)
 
-    exit(remove_packages(workspace_root, items))
+    exit(remove_packages(workspace_root, items, fetch_remotes=args.fetch))
