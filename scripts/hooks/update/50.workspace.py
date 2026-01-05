@@ -58,14 +58,16 @@ def launch_subprocess(cmd: list[str] | tuple[str, ...], cwd: str | Path):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            start_new_session=True,
+            start_new_session=True,  # Sets the child as a new process group leader
             env=env,
         ) as process:
             try:
                 stdout, stderr = process.communicate()
             except KeyboardInterrupt:
-                # Forward the interrupt to the child process group
-                process.send_signal(signal.SIGINT)
+                # Forward the interrupt to the entire child process group.
+                # Since start_new_session=True, the PGID is the same as the PID.
+                os.killpg(process.pid, signal.SIGINT)
+
                 # Wait briefly for it to exit, otherwise let the context manager kill it
                 try:
                     process.wait(timeout=2)
@@ -116,6 +118,7 @@ def _is_ancestor(repo: git.Repo, ancestor: str, descendant: str) -> bool:
         repo.git.merge_base("--is-ancestor", ancestor, descendant)
         return True
     except git.exc.GitCommandError:
+        # If refs are missing or invalid, fail safe (return False)
         return False
 
 
@@ -151,7 +154,8 @@ def _is_deleted_branch(repo: git.Repo, branch: git.Head) -> tuple[bool, str | No
         ValueError,
         AttributeError,
         TypeError,
-    ):  # remote itself lost
+    ):
+        # Best-effort detection: if remote config is lost or invalid, assume not deletable.
         if not repo.head.is_detached and branch.name == repo.head.ref.name:
             warn = (
                 f"Remote '{tracking.remote_name}' for current branch {branch.name} "
@@ -325,6 +329,7 @@ def process_repo(repo_path: Path) -> RepoResult:
                             AttributeError,
                             TypeError,
                         ):
+                            # Ignore remote config errors for this optional check
                             pass
 
             for br in repo.branches:
@@ -348,7 +353,8 @@ def process_repo(repo_path: Path) -> RepoResult:
             current_branch_remote=current_branch_remote,
         )
 
-    except Exception as exc:  # keep other repos going
+    except Exception as exc:
+        # Catch-all to prevent one failing repo from crashing the thread pool
         return RepoResult(repo_path, "?", False, False, False, [], [], "", "", str(exc))
 
 
