@@ -32,7 +32,8 @@ class RepoStatus:
     # only meaningful if fetch_remotes=True
     unpushed_branches: List[str] = field(default_factory=list)
     local_only_branches: List[str] = field(default_factory=list)
-    deleted_upstream_branches: List[str] = field(default_factory=list)
+    # Stores tuples of (branch_name, merge_hint)
+    deleted_upstream_branches: List[Tuple[str, str]] = field(default_factory=list)
 
     is_clean: bool = True
 
@@ -67,7 +68,7 @@ def _get_repo_root(path: Path, workspace_src: Path) -> Optional[Path]:
 def _collect_worktree_changes(repo: Repo) -> Tuple[List[str], int, int]:
     """
     Return (changes_summary, modified_count, untracked_count) using
-    `git status --porcelain` (robust, fast, works even if HEAD is unborn).
+    `git status --porcelain`.
     """
     try:
         out = repo.git.status("--porcelain=v1").splitlines()
@@ -106,6 +107,86 @@ def _collect_worktree_changes(repo: Repo) -> Tuple[List[str], int, int]:
     return changes_summary, modified_count, untracked_count
 
 
+def _remote_head_mainline_ref(repo: git.Repo, remote_name: str) -> str | None:
+    """
+    Resolve the remote's configured mainline via refs/remotes/<remote>/HEAD.
+    Returns a ref like '<remote>/<branch>' (e.g. 'origin/ros2') or None.
+    """
+    head_ref = f"refs/remotes/{remote_name}/HEAD"
+    try:
+        sym = repo.git.symbolic_ref("-q", head_ref).strip()
+        if not sym:
+            return None
+        prefix = f"refs/remotes/{remote_name}/"
+        if sym.startswith(prefix):
+            return f"{remote_name}/{sym[len(prefix):]}"
+        return None
+    except git.exc.GitCommandError:
+        return None
+
+
+def _get_dynamic_mainline(repo: git.Repo) -> str:
+    """
+    Detects the mainline branch name (e.g. 'main') dynamically.
+    Prioritizes remote-tracking HEAD, falls back to common names.
+    """
+    for remote in repo.remotes:
+        mainline_ref = _remote_head_mainline_ref(repo, remote.name)
+        if mainline_ref:
+            return mainline_ref.split("/", 1)[1]
+
+    for candidate in ["main", "master", "develop"]:
+        if candidate in repo.heads:
+            return candidate
+    return "main"
+
+
+def _find_merge_evidence(repo: git.Repo, branch: git.Head, mainline: str) -> str:
+    """
+    Determines if a branch was merged into the remote mainline or abandoned.
+    Tests for direct ancestry and squashed commit messages against the remote ref.
+    """
+    try:
+        # 1. Resolve the tracking branch for mainline (e.g., 'main' -> 'origin/main')
+        local_mainline = repo.heads[mainline]
+        tracking_ref = local_mainline.tracking_branch()
+        print(
+            f"Debug: Checking merge evidence for branch {branch.name} against mainline {mainline} (tracking: {tracking_ref})"
+        )
+
+        # If no tracking branch exists, fall back to local mainline for the check
+        # 'target' will be a string like 'origin/main' or 'main'
+        target = tracking_ref.name if tracking_ref else mainline
+
+        # 2. Direct Ancestry (Standard Merge or Rebase)
+        # Check if the branch commit is an ancestor of the remote mainline tip
+        if repo.is_ancestor(branch.commit, target):
+            return f"merged into {target}"
+
+        # 3. Squash Merge Search
+        # Limits search to remote mainline commits after the branch's last activity
+        since_date = branch.commit.committed_datetime.isoformat()
+
+        found_commit = repo.git.log(
+            target,
+            f"--grep={branch.name}",
+            f"--since={since_date}",
+            "--format=%H",
+            "-n",
+            "1",
+        )
+
+        if found_commit:
+            return f"merged into {target} (squashed)"
+
+    except Exception as e:
+        # Useful for debugging why a specific check failed
+        # print(f"Debug: Evidence check failed for {branch.name}: {e}")
+        pass
+
+    return "probably abandoned"
+
+
 def _collect_repo_status(
     repo_path: Path, workspace_root: Path, fetch: bool
 ) -> RepoStatus:
@@ -116,7 +197,8 @@ def _collect_repo_status(
     except git.exc.InvalidGitRepositoryError:
         return RepoStatus(rel_path=rel_path, branch="unknown", is_git=False)
 
-    # Branch info
+    mainline = _get_dynamic_mainline(repo)
+
     try:
         if repo.head.is_detached:
             branch_name = f"detached ({repo.head.commit.hexsha[:7]})"
@@ -139,7 +221,7 @@ def _collect_repo_status(
     # remote-related checks only if fetch=True (avoid lying when refs are stale)
     unpushed: List[str] = []
     local_only: List[str] = []
-    deleted_upstream: List[str] = []
+    deleted_upstream: List[Tuple[str, str]] = []
 
     if fetch:
         for remote in repo.remotes:
@@ -151,18 +233,17 @@ def _collect_repo_status(
         for branch in repo.branches:
             tracking = branch.tracking_branch()
             if not tracking:
-                local_only.append(branch.name)
+                if branch.name != mainline:
+                    local_only.append(branch.name)
                 continue
 
-            # Verify the tracking reference actually exists in the local git store
             try:
-                # tracking.path returns the full string like 'refs/remotes/origin/main'
-                print(tracking.path)
+                # Use tracking.path (refs/remotes/...) to verify physical existence
                 repo.git.show_ref("--verify", tracking.path, with_exceptions=True)
-                print(f"Verified tracking ref {tracking.path} for branch {branch.name}")
             except Exception:
-                # If we fetched and the ref is gone, the upstream branch was likely deleted
-                deleted_upstream.append(branch.name)
+                # Upstream is gone: try to find out if it was merged
+                hint = _find_merge_evidence(repo, branch, mainline)
+                deleted_upstream.append((branch.name, hint))
                 continue
 
             try:
@@ -220,14 +301,6 @@ def _print_status_report(status: RepoStatus, packages: List[str], fetched: bool)
                 labels.append("Local-only branches")
             if status.deleted_upstream_branches:
                 labels.append("Upstream missing")
-        else:
-            if (
-                status.unpushed_branches
-                or status.local_only_branches
-                or status.deleted_upstream_branches
-            ):
-                # shouldn't happen, but keep logic consistent
-                labels.append("Remote status unknown")
 
     print_info(f"Status: {', '.join(labels)}")
 
@@ -237,21 +310,16 @@ def _print_status_report(status: RepoStatus, packages: List[str], fetched: bool)
                 print_color(Colors.RED, f"  Unpushed: {b}")
             for b in status.local_only_branches:
                 print_color(Colors.LRED, f"  No Upstream: {b}")
-            for b in status.deleted_upstream_branches:
-                print_color(Colors.YELLOW, f"  Upstream Missing: {b}")
+            for b, hint in status.deleted_upstream_branches:
+                color = Colors.GREEN if "merged" in hint else Colors.YELLOW
+                print_color(color, f"  Upstream Missing: {b} ({hint})")
         else:
-            # gentle hint
-            print_color(
-                Colors.LGRAY,
-                "  (Hint: run with fetch_remotes=True to check upstream state)",
-            )
+            print_color(Colors.LGRAY, "  (Hint: run with fetch_remotes=True)")
 
         for change in status.changes_summary[:50]:
             print_color(Colors.ORANGE, f"  {change}")
         if len(status.changes_summary) > 50:
-            print_color(
-                Colors.LGRAY, f"  ... +{len(status.changes_summary) - 50} more changes"
-            )
+            print_color(Colors.LGRAY, f"  ... +{len(status.changes_summary) - 50} more")
 
         if status.untracked_count:
             print_color(Colors.LGRAY, f"  {status.untracked_count} untracked files")
@@ -277,8 +345,7 @@ def remove_packages(
         print_error("No packages specified.")
         return 1
 
-    items = list(dict.fromkeys(items))  # deduplicate while preserving order
-
+    items = list(dict.fromkeys(items))
     repo_map: Dict[Path, List[str]] = {}
     repos_explicitly_selected: Set[Path] = set()
     missing_items: List[str] = []
@@ -286,7 +353,6 @@ def remove_packages(
     # 1) Resolve items to repos
     for item in items:
         pkg_path_str = get_package_path(item, str(workspace_root))
-
         if pkg_path_str:
             repo_root = _get_repo_root(Path(pkg_path_str), src_root)
             if not repo_root:
@@ -300,12 +366,9 @@ def remove_packages(
         # treat as path (relative to ws or src)
         candidate_ws = workspace_root / item
         candidate_src = src_root / item
-
-        found_path: Optional[Path] = None
-        if candidate_ws.is_dir():
-            found_path = candidate_ws
-        elif candidate_src.is_dir():
-            found_path = candidate_src
+        found_path = next(
+            (p for p in [candidate_ws, candidate_src] if p.is_dir()), None
+        )
 
         if not found_path:
             missing_items.append(item)
@@ -325,10 +388,8 @@ def remove_packages(
 
     # 2) Determine final repos and packages to clean
     final_repos_to_process: List[Tuple[Path, List[str]]] = []
-
     for repo_root, requested_pkgs in repo_map.items():
         all_pkgs_in_repo = find_packages_in_directory(str(repo_root))
-
         if repo_root in repos_explicitly_selected:
             final_repos_to_process.append((repo_root, all_pkgs_in_repo))
             continue
@@ -337,21 +398,17 @@ def remove_packages(
         if extra_pkgs:
             repo_rel = repo_root.relative_to(workspace_root)
             print_warn(
-                f"Repository '{repo_rel}' contains other packages: {', '.join(extra_pkgs)}"
+                f"Repo '{repo_rel}' contains other packages: {', '.join(extra_pkgs)}"
             )
             if not confirm("Remove the entire repository and all these packages?"):
-                print_info("Skipping.")
                 continue
-
         final_repos_to_process.append((repo_root, all_pkgs_in_repo))
 
-    # 3) Execute deletions
-    sucess = True
+    success = True
     for repo_root, packages in final_repos_to_process:
         repo_root = repo_root.resolve()
         repo_rel = repo_root.relative_to(workspace_root)
 
-        # final safety guard
         if not repo_root.is_relative_to(src_root):
             print_error(
                 f"SAFETY GUARD: Refusing to delete {repo_root} (outside {src_root})"
@@ -361,15 +418,27 @@ def remove_packages(
         status = _collect_repo_status(repo_root, workspace_root, fetch_remotes)
         _print_status_report(status, packages, fetched=fetch_remotes)
 
-        # Decide whether to warn
-        has_uncommitted = bool(status.changes_summary) or status.untracked_count > 0
-        has_local_work = has_uncommitted or (status.stash_count > 0)
+        # Logic: Don't consider a branch "lost work" if it's already merged
         has_unpushed = bool(status.unpushed_branches) or bool(
             status.local_only_branches
         )
 
+        # Only warn for deleted upstreams that aren't merged
+        unmerged_deleted = [
+            b for b, hint in status.deleted_upstream_branches if "merged" not in hint
+        ]
+
+        has_local_work = (
+            bool(status.changes_summary)
+            or status.untracked_count > 0
+            or status.stash_count > 0
+            or bool(unmerged_deleted)
+        )
+
         if has_local_work or has_unpushed:
-            print_error("WARNING: local work will be lost (dirty/stash/unpushed).")
+            print_error(
+                "WARNING: local work will be lost (dirty/stash/unpushed/unmerged)."
+            )
             if not confirm(f"Proceed with deletion of {repo_rel} anyway?"):
                 continue
 
@@ -387,6 +456,6 @@ def remove_packages(
             print_info("Deleted.")
         except OSError as e:
             print_error(f"Failed to delete {repo_root}: {e}")
-            sucess = False
+            success = False
 
-    return 0 if sucess else 1
+    return 0 if success else 1
