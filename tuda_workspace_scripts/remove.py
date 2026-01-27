@@ -154,16 +154,14 @@ def _collect_repo_status(
                 local_only.append(branch.name)
                 continue
 
-            # tracking ref might still not exist locally; treat as deleted/unknown
+            # Verify the tracking reference actually exists in the local git store
             try:
-                # "git show-ref --verify refs/remotes/..."
-                repo.git.show_ref(
-                    "--verify",
-                    f"refs/remotes/{tracking.remote_head}",
-                    with_exceptions=True,
-                )
+                # tracking.path returns the full string like 'refs/remotes/origin/main'
+                print(tracking.path)
+                repo.git.show_ref("--verify", tracking.path, with_exceptions=True)
+                print(f"Verified tracking ref {tracking.path} for branch {branch.name}")
             except Exception:
-                # safer: just label as deleted/unknown if tracking cannot be verified after fetch
+                # If we fetched and the ref is gone, the upstream branch was likely deleted
                 deleted_upstream.append(branch.name)
                 continue
 
@@ -174,7 +172,6 @@ def _collect_repo_status(
                 if commits_ahead > 0:
                     unpushed.append(branch.name)
             except Exception:
-                # ignore; keep script simple
                 pass
 
     has_changes = (
@@ -349,6 +346,7 @@ def remove_packages(
         final_repos_to_process.append((repo_root, all_pkgs_in_repo))
 
     # 3) Execute deletions
+    sucess = True
     for repo_root, packages in final_repos_to_process:
         repo_root = repo_root.resolve()
         repo_rel = repo_root.relative_to(workspace_root)
@@ -389,5 +387,6 @@ def remove_packages(
             print_info("Deleted.")
         except OSError as e:
             print_error(f"Failed to delete {repo_root}: {e}")
+            sucess = False
 
-    return 0
+    return 0 if sucess else 1
