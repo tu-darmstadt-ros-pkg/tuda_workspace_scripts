@@ -30,7 +30,7 @@ if __name__ == "__main__":
         help="Remove the package(s) in the current directory.",
     )
     parser.add_argument(
-        "--fetch",
+        "--no-fetch",
         default=False,
         action="store_true",
         help="Fetch remotes before checking mainline merge state.",
@@ -60,4 +60,4 @@ if __name__ == "__main__":
         print_error("No packages or repositories specified for removal.")
         exit(1)
 
-    exit(remove_packages(workspace_root, items, fetch_remotes=args.fetch))
+    exit(remove_packages(workspace_root, items, fetch_remotes=not args.no_fetch))
