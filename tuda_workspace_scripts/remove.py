@@ -1,76 +1,29 @@
 import shutil
+import subprocess
 from pathlib import Path
 from typing import List
 
 from .build import clean_packages
-from .git_helpers import (
-    RepoStatus,
-    collect_repo_status,
+from .git_utils import (
     get_repo_root,
-    find_merge_evidence,
+    print_repo_status,
 )
-from .print import Colors, confirm, print_error, print_info, print_warn, print_color
+from .print import confirm, print_error, print_info, print_warn
 from .workspace import find_packages_in_directory, get_package_path
-
-try:
-    import git
-except ImportError:
-    print_error("GitPython is required! Install using 'pip install gitpython'")
-    raise
-
-
-def _print_status_report(status: RepoStatus, packages: List[str], fetched: bool):
-    print_info(
-        f"Repo: {status.rel_path} (local: {status.branch} | mainline: {status.mainline})"
-    )
-    if not status.is_git:
-        print_warn("  [!] Not a git repository")
-        return
-
-    labels = []
-    if status.is_clean:
-        labels.append("Clean")
-    else:
-        if status.changes_summary or status.untracked_count:
-            labels.append("Working tree dirty")
-        if status.stash_count:
-            labels.append("Stashed changes")
-        if fetched:
-            if status.unpushed_branches:
-                labels.append("Unpushed commits")
-            if status.local_only_branches:
-                labels.append("Local-only branches")
-            if status.deleted_upstream_branches:
-                labels.append("Upstream missing")
-
-    print_info(f"Status: {', '.join(labels)}")
-    if status.has_changes:
-        if fetched:
-            for b, count in status.unpushed_branches:
-                commits_str = "commit" if count == 1 else "commits"
-                print_color(Colors.RED, f"  Unpushed: {b} ({count} {commits_str})")
-            for b in status.local_only_branches:
-                print_color(Colors.LRED, f"  No Upstream: {b}")
-            for b, hint in status.deleted_upstream_branches:
-                color = Colors.GREEN if "merged" in hint else Colors.YELLOW
-                print_color(color, f"  Upstream Missing: {b} ({hint})")
-        else:
-            print_color(Colors.LGRAY, "  (Hint: run with fetch_remotes=True)")
-
-        for change in status.changes_summary[:50]:
-            print_color(Colors.ORANGE, f"  {change}")
-        if status.untracked_count:
-            print_color(Colors.LGRAY, f"  {status.untracked_count} untracked files")
-        if status.stash_count:
-            print_color(Colors.LGRAY, f"  {status.stash_count} stash entries")
-    print("Packages in this repo:")
-    for p in sorted(packages):
-        print(f"  - {p}")
 
 
 def remove_packages(
     workspace_root_str: str, items: List[str], fetch_remotes: bool = False
 ) -> int:
+    """Remove specified items (packages or repositories) from the workspace.
+    Before removal, checks if the repository is dirty (uncommitted changes, unpushed commits, stash entries).
+    Args:
+        workspace_root_str: Path to the workspace root as a string.
+        items: List of package names or repository paths to remove.
+        fetch_remotes: Whether to fetch remotes before checking mainline merge state.
+    Returns:
+        0 on success, 1 on failure.
+    """
     if not workspace_root_str:
         print_error("No workspace configured!")
         return 1
@@ -132,20 +85,40 @@ def remove_packages(
     for repo_root, packages in final_repos:
         print_info(f"Collecting status for repo {repo_root}...")
         repo_rel = repo_root.relative_to(workspace_root)
-        status = collect_repo_status(repo_root, workspace_root, fetch_remotes)
-        _print_status_report(status, packages, fetched=fetch_remotes)
 
-        unmerged_deleted = [
-            b for b, hint in status.deleted_upstream_branches if "merged" not in hint
-        ]
-        has_local_work = (
-            bool(status.changes_summary)
-            or status.untracked_count > 0
-            or status.stash_count > 0
-            or bool(unmerged_deleted)
-            or bool(status.unpushed_branches)
-            or bool(status.local_only_branches)
-        )
+        if fetch_remotes:
+            try:
+                subprocess.run(
+                    ["git", "fetch", "--prune", "--all", "--quiet"],
+                    cwd=str(repo_root),
+                    capture_output=True,
+                    timeout=30,
+                )
+            except Exception:
+                pass
+
+        status = print_repo_status(repo_root, workspace_root, always_print_header=True)
+
+        print("Packages in this repo:")
+        for p in sorted(packages):
+            print(f"  - {p}")
+
+        if status:
+            unmerged_deleted = [
+                b
+                for b, hint in status.deleted_upstream_branches
+                if "merged" not in hint
+            ]
+            has_local_work = (
+                bool(status.changes_summary)
+                or status.untracked_count > 0
+                or status.stash_count > 0
+                or bool(unmerged_deleted)
+                or bool(status.unpushed_branches)
+                or bool(status.local_only_branches)
+            )
+        else:
+            has_local_work = False
 
         if has_local_work:
             print_error(
