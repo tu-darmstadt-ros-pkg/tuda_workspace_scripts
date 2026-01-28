@@ -27,11 +27,9 @@ from tuda_workspace_scripts.print import (
     print_workspace_error,
 )
 from tuda_workspace_scripts.workspace import get_workspace_root
-from tuda_workspace_scripts.git_helpers import (
+from tuda_workspace_scripts.git_utils import (
     launch_subprocess,
-    has_commits_not_on_remote,
     get_remote_head_mainline,
-    is_ancestor,
     get_deleted_branch_status,
     collect_repos,
 )

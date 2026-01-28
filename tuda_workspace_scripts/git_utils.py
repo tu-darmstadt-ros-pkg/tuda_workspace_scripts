@@ -2,8 +2,8 @@
 Git Repository Helper Module.
 
 This module provides reusable functions for git repository management within
-a ROS 2 workspace. It consolidates common git operations used by the update
-and remove scripts.
+a ROS 2 workspace. It consolidates common git operations used by e.g. the status, 
+update and remove scripts.
 
 Key Features:
     - Mainline branch detection with optional auto-configuration
@@ -13,7 +13,7 @@ Key Features:
     - Repository discovery within workspace boundaries
 
 Example Usage:
-    >>> from tuda_workspace_scripts.git_helpers import (
+    >>> from tuda_workspace_scripts.git_utils import (
     ...     get_mainline_branch,
     ...     collect_repo_status,
     ...     RepoStatus,
@@ -22,8 +22,6 @@ Example Usage:
     >>> mainline = get_mainline_branch(repo, auto_set=True)
     >>> status = collect_repo_status(Path("/path/to/repo"), workspace_root)
 """
-
-from __future__ import annotations
 
 import os
 import signal
@@ -37,9 +35,15 @@ try:
     from git import Repo
 except ImportError as e:
     raise ImportError(
-        "GitPython is required! Install using 'pip install gitpython' "
-        "or 'apt install python3-git'"
+        "GitPython is required! Install using 'pip3 install --user gitpython' or 'apt install python3-git'"
     ) from e
+
+from tuda_workspace_scripts.print import (
+    print_error,
+    print_info,
+    print_color,
+    Colors,
+)
 
 
 # =============================================================================
@@ -334,63 +338,6 @@ def get_mainline_branch(repo: git.Repo, auto_set: bool = False) -> str:
 
 
 # =============================================================================
-# WORKTREE CHANGES
-# =============================================================================
-
-
-def collect_worktree_changes(repo: Repo) -> Tuple[List[str], int, int]:
-    """Collect working tree changes using git status.
-
-    Parses git status porcelain output to identify modified, added, deleted,
-    and renamed files.
-
-    Args:
-        repo: GitPython Repo instance.
-
-    Returns:
-        Tuple of (changes_summary, modified_count, untracked_count) where:
-        - changes_summary: List of human-readable change descriptions
-        - modified_count: Number of tracked files with changes
-        - untracked_count: Number of untracked files
-
-    Example:
-        >>> repo = git.Repo("/path/to/repo")
-        >>> changes, modified, untracked = collect_worktree_changes(repo)
-        >>> for change in changes:
-        ...     print(change)
-    """
-    try:
-        out = repo.git.status("--porcelain=v1").splitlines()
-    except git.exc.GitCommandError:
-        out = []
-
-    changes_summary: List[str] = []
-    modified_count = 0
-    untracked_count = 0
-
-    for line in out:
-        if not line:
-            continue
-        if line.startswith("?? "):
-            untracked_count += 1
-            continue
-
-        xy, rest = line[:2], line[3:]
-        modified_count += 1
-
-        if "R" in xy:
-            changes_summary.append(f"Renamed: {rest}")
-        elif "D" in xy:
-            changes_summary.append(f"Deleted: {rest}")
-        elif "A" in xy:
-            changes_summary.append(f"Added: {rest}")
-        else:
-            changes_summary.append(f"Modified: {rest}")
-
-    return changes_summary, modified_count, untracked_count
-
-
-# =============================================================================
 # BRANCH STATUS
 # =============================================================================
 
@@ -454,6 +401,7 @@ def find_merge_evidence(
     Checks for merge evidence using two strategies:
     1. Direct ancestry (branch is reachable from mainline)
     2. Squash merge detection (commit message contains branch name)
+    3. Squash merge detection (commit messages contain all branch commit titles)
 
     Args:
         repo: GitPython Repo instance.
@@ -479,7 +427,8 @@ def find_merge_evidence(
         if repo.is_ancestor(branch.commit, target):
             return True, f"merged into {target}"
 
-        # Strategy 2: Squash Merge Search
+        # Strategy 2: Squash Merge Search (by branch name)
+        # Find commits on target that mention branch name
         since_date = branch.commit.committed_datetime.isoformat()
         found = repo.git.log(
             target,
@@ -491,6 +440,30 @@ def find_merge_evidence(
         )
         if found:
             return True, f"merged into {target} (squashed)"
+
+        # Strategy 3: Squash Merge Search (by commit contents)
+        # GitHub adds all commit titles to the squash commit message
+        # Find all commits on branch not in target
+        unique_commits = list(repo.iter_commits(f"{target}..{branch.name}"))
+        if unique_commits:
+            # Extract titles, filtering out empty/whitespace-only ones
+            titles = [
+                c.summary.strip()
+                for c in unique_commits
+                if c.summary and c.summary.strip()
+            ]
+
+            if titles:
+                # Search commits in target since branch creation/update
+                for commit in repo.iter_commits(target, since=since_date):
+                    if isinstance(commit.message, bytes):
+                        msg = commit.message.decode("utf-8", "replace")
+                    else:
+                        msg = commit.message
+
+                    # Check if ALL titles are present in this commit's message
+                    if all(title in msg for title in titles):
+                        return True, f"merged into {target} (squashed)"
 
         return False, f"merge into {target} unverified"
     except Exception:
@@ -709,4 +682,214 @@ def collect_repo_status(
         deleted_upstream_branches=deleted_upstream,
         changes_summary=changes_summary,
         is_clean=not has_changes,
+    )
+
+
+# =============================================================================
+# REPOSITORY STATUS PRINTING
+# =============================================================================
+
+
+def print_repo_status(
+    repo_path: Path,
+    root_path: Path,
+    always_print_header: bool = False,
+) -> Optional[RepoStatus]:
+    """Print status information for a single repository.
+
+    Args:
+        repo_path: Absolute path to the repository.
+        root_path: Root path for relative display.
+        always_print_header: If True, print repo header even if clean.
+
+    Returns:
+        RepoStatus if the repository has issues to report (or if forced), None otherwise.
+        Note: logic for returning None is based on 'has_issues', not 'always_print_header'.
+    """
+    try:
+        repo = git.Repo(repo_path, search_parent_directories=False)
+    except git.exc.InvalidGitRepositoryError:
+        print_error(f"Failed to obtain git info for: {repo_path}")
+        return None
+
+    # Collect stash info
+    try:
+        stash = repo.git.stash("list")
+        stash_count = len(stash.splitlines()) if stash else 0
+    except git.exc.GitCommandError as e:
+        if "not a git repository" in e.stderr:
+            return None
+        print_error(f"Failed to obtain changes for {repo_path}: {e}")
+        return None
+    except Exception:
+        stash_count = 0
+
+    # Collect changes using repo.index.diff
+    try:
+        changes = repo.index.diff(None)
+    except git.exc.GitCommandError as e:
+        print_error(f"Failed to obtain changes for {repo_path}: {e}")
+        return None
+
+    try:
+        # Need to reverse using R=True, otherwise we get the diff from tree to HEAD
+        # meaning deleted files are added and vice versa
+        changes += repo.index.diff("HEAD", R=True)
+    except git.BadName as e:
+        pass  # Repo has no HEAD (probably just initialized)
+
+    # Detect mainline branch
+    mainline = get_mainline_branch(repo)
+
+    # Check branches for unpushed commits, local-only, and deleted upstream
+    unpushed_branches: List[Tuple[str, int]] = []
+    local_only_branches: List[str] = []
+    deleted_branches: List[Tuple[str, str]] = []
+
+    for branch in repo.branches:
+        tracking = branch.tracking_branch()
+        if tracking is None:
+            local_only_branches.append(branch.name)
+            continue
+        if not tracking.is_valid():
+            # Check for merge evidence
+            _, hint = find_merge_evidence(repo, branch, mainline)
+            deleted_branches.append((branch.name, hint))
+            continue
+        try:
+            # Count unpushed commits using iter_commits logic
+            if any(
+                True for _ in repo.iter_commits(f"{branch.name}@{{u}}..{branch.name}")
+            ):
+                # To get the count we can use len or rev_list count
+                count = int(
+                    repo.git.rev_list("--count", f"{tracking.name}..{branch.name}")
+                )
+                unpushed_branches.append((branch.name, count))
+        except (git.exc.GitCommandError, Exception) as e:
+            error_msg = getattr(e, "message", str(e))
+            print_error(f"{repo_path} has error on branch {branch.name}: {error_msg}")
+
+    # Determine if there's anything to report
+    untracked_count = len(repo.untracked_files)
+
+    has_issues = (
+        untracked_count > 0
+        or stash_count > 0
+        or bool(unpushed_branches)
+        or bool(local_only_branches)
+        or bool(deleted_branches)
+        or bool(changes)
+    )
+
+    if not has_issues and not always_print_header:
+        if repo.is_dirty():
+            print_info(str(repo_path))
+            print_error("  Dirty but I don't know why")
+            print("")
+        return None
+
+    # Determine current branch name
+    if not repo.head.is_valid():
+        branch_name = "unknown"
+    elif repo.head.is_detached:
+        branch_name = f"detached at {repo.head.commit}"
+    else:
+        branch_name = repo.head.ref.name
+
+    # Print header with branch info
+    rel_path = repo_path.relative_to(root_path) if root_path else repo_path
+    print_info(f"{rel_path} {Colors.LPURPLE}({branch_name} | mainline: {mainline})")
+
+    if not has_issues and always_print_header:
+        print_color(Colors.GREEN, "  Clean")
+        print("")
+        return None
+
+    # Print warnings
+    if len(repo.branches) == 0:
+        print_color(Colors.LRED, "  No branches configured upstream.")
+
+    for branch, count in unpushed_branches:
+        commits_str = "commit" if count == 1 else "commits"
+        print_color(
+            Colors.RED,
+            f"  Unpushed commits on branch {branch}! ({count} {commits_str})",
+        )
+
+    for branch in local_only_branches:
+        print_color(Colors.LRED, f"  Local branch with no remote set up: {branch}")
+
+    for branch, hint in deleted_branches:
+        color = Colors.GREEN if "merged" in hint else Colors.LRED
+        print_color(
+            color, f"  Local branch for which remote was deleted: {branch} ({hint})"
+        )
+
+    if stash_count > 0:
+        if stash_count == 1:
+            print_color(Colors.LCYAN, "  Stashed changes")
+        else:
+            print_color(Colors.LCYAN, f"  Stashed changes ({stash_count} entries)")
+
+    # Print file changes with specific colors
+    changes_summary_str: List[str] = []
+
+    for item in changes:
+        if item.change_type.startswith("M"):
+            msg = f"Modified: {item.a_path}"
+            print_color(Colors.ORANGE, f"  {msg}")
+            changes_summary_str.append(msg)
+        elif item.change_type.startswith("D"):
+            msg = f"Deleted: {item.a_path}"
+            print_color(Colors.RED, f"  {msg}")
+            changes_summary_str.append(msg)
+        elif item.change_type.startswith("R"):
+            msg = f"Renamed: {item.a_path} -> {item.b_path}"
+            print_color(Colors.GREEN, f"  {msg}")
+            changes_summary_str.append(msg)
+        elif item.change_type.startswith("A"):
+            msg = f"Added: {item.a_path}"
+            print_color(Colors.GREEN, f"  {msg}")
+            changes_summary_str.append(msg)
+        elif item.change_type.startswith("U"):
+            msg = f"Unmerged: {item.a_path}"
+            print_error(f"  {msg}")
+            changes_summary_str.append(msg)
+        elif item.change_type.startswith("C"):
+            msg = f"Copied: {item.a_path} -> {item.b_path}"
+            print_color(Colors.GREEN, f"  {msg}")
+            changes_summary_str.append(msg)
+        elif item.change_type.startswith("T"):
+            msg = f"Type changed: {item.a_path}"
+            print_color(Colors.ORANGE, f"  {msg}")
+            changes_summary_str.append(msg)
+        else:
+            msg = f"Unhandled change type '{item.change_type}': {item.a_path}"
+            print_color(Colors.RED, f"  {msg}")
+            changes_summary_str.append(msg)
+
+    # Print untracked files
+    if untracked_count > 0:
+        if untracked_count < 10:
+            for file in repo.untracked_files:
+                print_color(Colors.LGRAY, f"  Untracked: {file}")
+        else:
+            print_color(Colors.LGRAY, f"  {untracked_count} untracked files.")
+
+    print("")
+
+    return RepoStatus(
+        rel_path=str(rel_path),
+        branch=branch_name,
+        mainline=mainline,
+        is_git=True,
+        has_changes=has_issues,
+        untracked_count=untracked_count,
+        stash_count=stash_count,
+        unpushed_branches=unpushed_branches,
+        local_only_branches=local_only_branches,
+        deleted_upstream_branches=[(b, "") for b in deleted_branches],
+        changes_summary=changes_summary_str,
+        is_clean=not has_issues,
     )
