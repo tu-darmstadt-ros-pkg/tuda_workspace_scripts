@@ -62,15 +62,21 @@ def print_error(message, file=stderr):
     print_color(Colors.Error, message, file)
 
 
-def confirm(question):
+def confirm(question, default_yes=True) -> bool:
     """
     Prompts the user to confirm a question with yes or no.
     """
     while True:
-        answer = input(f"{question} [Y/n]: ").lower()
-        if answer == "y" or answer == "yes":
+        answer = (
+            input(f"{question} [{'Y/n' if default_yes else 'y/N'}] ").strip().lower()
+        )
+        if answer == "" and default_yes:
             return True
-        if answer == "n" or answer == "no":
+        elif answer == "" and not default_yes:
+            return False
+        elif answer in ["y", "yes"]:
+            return True
+        elif answer in ["n", "no"]:
             return False
         print("I did not quite catch that! Please answer yes or no.")
 
