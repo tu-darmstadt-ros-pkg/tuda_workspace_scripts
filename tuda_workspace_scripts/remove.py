@@ -95,7 +95,7 @@ def remove_packages(
                     timeout=30,
                 )
             except Exception:
-                pass
+                pass  # Fetch is optional; proceed with local state
 
         status = print_repo_status(repo_root, workspace_root, always_print_header=True)
 

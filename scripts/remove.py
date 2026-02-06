@@ -39,7 +39,7 @@ if __name__ == "__main__":
         "--no-fetch",
         default=False,
         action="store_true",
-        help="Fetch remotes before checking mainline merge state.",
+        help="Do not fetch remotes before checking mainline merge state.",
     )
 
     completer = SmartCompletionFinder(parser)

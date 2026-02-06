@@ -2,12 +2,12 @@
 Git Repository Helper Module.
 
 This module provides reusable functions for git repository management within
-a ROS 2 workspace. It consolidates common git operations used by e.g. the status, 
+a ROS 2 workspace. It consolidates common git operations used by e.g. the status,
 update and remove scripts.
 
 Key Features:
     - Mainline branch detection with optional auto-configuration
-    - Repository status collection (dirty state, unpushed commits, etc.)
+    - Repository status printing (dirty state, unpushed commits, etc.)
     - Branch tracking and merge evidence detection
     - Safe subprocess execution with timeout handling
     - Repository discovery within workspace boundaries
@@ -15,12 +15,11 @@ Key Features:
 Example Usage:
     >>> from tuda_workspace_scripts.git_utils import (
     ...     get_mainline_branch,
-    ...     collect_repo_status,
-    ...     RepoStatus,
+    ...     print_repo_status,
     ... )
     >>> repo = git.Repo("/path/to/repo")
     >>> mainline = get_mainline_branch(repo, auto_set=True)
-    >>> status = collect_repo_status(Path("/path/to/repo"), workspace_root)
+    >>> status = print_repo_status(Path("/path/to/repo"), workspace_root)
 """
 
 import os
@@ -279,7 +278,7 @@ def get_remote_head_mainline(
             if sym and sym.startswith(prefix):
                 return f"{remote_name}/{sym[len(prefix):]}"
         except git.exc.GitCommandError:
-            pass
+            pass  # HEAD ref not configured; fall through to return None
         return None
 
     resolved = try_resolve()
@@ -296,7 +295,7 @@ def get_remote_head_mainline(
             )
             return try_resolve()
         except Exception:
-            pass
+            pass  # Auto-set failed (network, permissions, etc.); fall through
 
     return None
 
@@ -467,7 +466,7 @@ def find_merge_evidence(
 
         return False, f"merge into {target} unverified"
     except Exception:
-        pass
+        pass  # Branch or mainline ref invalid; report as unverified
 
     return False, f"merge into {mainline} unverified"
 
@@ -557,132 +556,6 @@ def get_deleted_branch_status(
         return False, warn
 
     return True, None
-
-
-# =============================================================================
-# REPOSITORY STATUS COLLECTION
-# =============================================================================
-
-
-def collect_repo_status(
-    repo_path: Path,
-    workspace_root: Path,
-    fetch: bool = False,
-) -> RepoStatus:
-    """Collect comprehensive status information for a repository.
-
-    Gathers all relevant status information including local changes,
-    branch status, and optionally fetches from remotes to detect
-    synchronization issues.
-
-    Args:
-        repo_path: Absolute path to the repository.
-        workspace_root: Workspace root for relative path calculation.
-        fetch: If True, fetch from all remotes before checking status.
-
-    Returns:
-        RepoStatus dataclass with complete repository state.
-
-    Example:
-        >>> status = collect_repo_status(Path("/workspace/src/my_pkg"), workspace_root)
-        >>> if not status.is_clean:
-        ...     print(f"Repository has changes: {status.changes_summary}")
-    """
-    rel_path = str(repo_path.relative_to(workspace_root))
-
-    try:
-        repo = Repo(repo_path)
-    except git.exc.InvalidGitRepositoryError:
-        return RepoStatus(rel_path=rel_path, branch="unknown", is_git=False)
-
-    mainline = get_mainline_branch(repo)
-
-    # Determine current branch
-    try:
-        branch_name = (
-            f"detached ({repo.head.commit.hexsha[:7]})"
-            if repo.head.is_detached
-            else repo.active_branch.name
-        )
-    except Exception:
-        branch_name = "unknown"
-
-    # Collect local working tree status
-    changes_summary, mod_count, untracked_count = collect_worktree_changes(repo)
-
-    # Count stashes
-    stash_count = 0
-    try:
-        stash_out = repo.git.stash("list")
-        stash_count = len(stash_out.splitlines()) if stash_out else 0
-    except git.exc.GitCommandError:
-        pass
-
-    unpushed: List[Tuple[str, int]] = []
-    local_only: List[str] = []
-    deleted_upstream: List[Tuple[str, str]] = []
-
-    if fetch:
-        # Fetch with prune
-        try:
-            subprocess.run(
-                ["git", "fetch", "--prune", "--all", "--quiet"],
-                cwd=str(repo_path),
-                capture_output=True,
-                timeout=30,
-            )
-        except Exception:
-            pass  # Fetch failures are handled gracefully
-
-        # Check branch synchronization
-        for branch in repo.branches:
-            tracking = branch.tracking_branch()
-            if not tracking:
-                if branch.name != mainline:
-                    local_only.append(branch.name)
-                continue
-
-            # Verify tracking ref exists
-            try:
-                repo.git.show_ref("--verify", tracking.path, with_exceptions=True)
-            except Exception:
-                _, hint = find_merge_evidence(repo, branch, mainline)
-                deleted_upstream.append((branch.name, hint))
-                continue
-
-            # Check for unpushed commits
-            try:
-                count = int(
-                    repo.git.rev_list("--count", f"{tracking.name}..{branch.name}")
-                )
-                if count > 0:
-                    unpushed.append((branch.name, count))
-            except Exception:
-                pass
-
-    has_changes = (
-        mod_count > 0
-        or untracked_count > 0
-        or stash_count > 0
-        or bool(unpushed)
-        or bool(local_only)
-        or bool(deleted_upstream)
-    )
-
-    return RepoStatus(
-        rel_path=rel_path,
-        branch=branch_name,
-        mainline=mainline,
-        is_git=True,
-        has_changes=has_changes,
-        untracked_count=untracked_count,
-        stash_count=stash_count,
-        unpushed_branches=unpushed,
-        local_only_branches=local_only,
-        deleted_upstream_branches=deleted_upstream,
-        changes_summary=changes_summary,
-        is_clean=not has_changes,
-    )
 
 
 # =============================================================================
@@ -889,7 +762,7 @@ def print_repo_status(
         stash_count=stash_count,
         unpushed_branches=unpushed_branches,
         local_only_branches=local_only_branches,
-        deleted_upstream_branches=[(b, "") for b in deleted_branches],
+        deleted_upstream_branches=deleted_branches,
         changes_summary=changes_summary_str,
         is_clean=not has_issues,
     )
