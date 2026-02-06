@@ -397,10 +397,10 @@ def find_merge_evidence(
 ) -> Tuple[bool, str]:
     """Detect if a branch has been merged into the mainline.
 
-    Checks for merge evidence using two strategies:
-    1. Direct ancestry (branch is reachable from mainline)
-    2. Squash merge detection (commit message contains branch name)
-    3. Squash merge detection (commit messages contain all branch commit titles)
+    Checks for merge evidence using multiple strategies:
+    - Direct ancestry: branch is reachable from mainline
+    - Squash merge detection: commit message contains branch name
+    - Squash merge detection: commit messages contain all branch commit titles
 
     Args:
         repo: GitPython Repo instance.
@@ -608,7 +608,7 @@ def print_repo_status(
         # Need to reverse using R=True, otherwise we get the diff from tree to HEAD
         # meaning deleted files are added and vice versa
         changes += repo.index.diff("HEAD", R=True)
-    except git.BadName as e:
+    except git.BadName:
         pass  # Repo has no HEAD (probably just initialized)
 
     # Detect mainline branch
@@ -639,7 +639,7 @@ def print_repo_status(
                     repo.git.rev_list("--count", f"{tracking.name}..{branch.name}")
                 )
                 unpushed_branches.append((branch.name, count))
-        except (git.exc.GitCommandError, Exception) as e:
+        except Exception as e:
             error_msg = getattr(e, "message", str(e))
             print_error(f"{repo_path} has error on branch {branch.name}: {error_msg}")
 
@@ -658,7 +658,18 @@ def print_repo_status(
     if not has_issues and not always_print_header:
         if repo.is_dirty():
             print_info(str(repo_path))
-            print_error("  Dirty but I don't know why")
+            print_error("  Dirty but undetected by change analysis:")
+            try:
+                git_status = repo.git.status("--porcelain")
+                if git_status:
+                    for line in git_status.splitlines()[:5]:
+                        print_error(f"    {line}")
+                    if len(git_status.splitlines()) > 5:
+                        print_error(
+                            f"    ... and {len(git_status.splitlines()) - 5} more"
+                        )
+            except Exception:
+                pass
             print("")
         return None
 
@@ -666,7 +677,7 @@ def print_repo_status(
     if not repo.head.is_valid():
         branch_name = "unknown"
     elif repo.head.is_detached:
-        branch_name = f"detached at {repo.head.commit}"
+        branch_name = f"detached@{repo.head.commit.hexsha[:7]}"
     else:
         branch_name = repo.head.ref.name
 
@@ -681,7 +692,7 @@ def print_repo_status(
 
     # Print warnings
     if len(repo.branches) == 0:
-        print_color(Colors.LRED, "  No branches configured upstream.")
+        print_color(Colors.LRED, "  Repository has no local branches.")
 
     for branch, count in unpushed_branches:
         commits_str = "commit" if count == 1 else "commits"

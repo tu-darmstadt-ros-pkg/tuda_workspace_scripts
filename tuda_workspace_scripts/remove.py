@@ -1,11 +1,11 @@
 import shutil
-import subprocess
 from pathlib import Path
 from typing import List
 
 from .build import clean_packages
 from .git_utils import (
     get_repo_root,
+    launch_subprocess,
     print_repo_status,
 )
 from .print import confirm, print_error, print_info, print_warn
@@ -87,15 +87,11 @@ def remove_packages(
         repo_rel = repo_root.relative_to(workspace_root)
 
         if fetch_remotes:
-            try:
-                subprocess.run(
-                    ["git", "fetch", "--prune", "--all", "--quiet"],
-                    cwd=str(repo_root),
-                    capture_output=True,
-                    timeout=30,
-                )
-            except Exception:
-                pass  # Fetch is optional; proceed with local state
+            launch_subprocess(
+                ["git", "fetch", "--prune", "--all", "--quiet"],
+                cwd=repo_root,
+                timeout=30,
+            )  # Fetch is optional; failures handled gracefully by launch_subprocess
 
         status = print_repo_status(repo_root, workspace_root, always_print_header=True)
 
@@ -118,7 +114,9 @@ def remove_packages(
                 or bool(status.local_only_branches)
             )
         else:
-            has_local_work = False
+            # Failed to get status - warn user and require confirmation
+            print_warn("Could not determine repository status.")
+            has_local_work = True  # Assume there might be local work
 
         if has_local_work:
             print_error(

@@ -45,6 +45,9 @@ except ImportError:
 
 
 # RESULT CONTAINER
+# Note: RepoResult is distinct from git_utils.RepoStatus:
+# - RepoStatus: Describes the current state of a repo (for status/remove commands)
+# - RepoResult: Captures the outcome of update operations (fetch/pull results, errors)
 class RepoResult:
     __slots__ = (
         "path",
@@ -303,6 +306,8 @@ def update(**_) -> bool:
             else:
                 if res.stdout.strip():
                     print_info(res.stdout.rstrip())
+        elif res.branch.startswith("detached"):
+            print_info("skipped pull - detached HEAD")
         else:
             print_info("skipped pull - current branch has no upstream")
 
