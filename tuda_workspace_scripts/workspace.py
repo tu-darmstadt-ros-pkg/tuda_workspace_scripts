@@ -19,7 +19,7 @@ def get_workspace_root(directory=None) -> str | None:
             return root
         colcon_prefix_path = os.environ.get("COLCON_PREFIX_PATH", None)
         return (
-            get_workspace_root(colcon_prefix_path)
+            get_workspace_root(colcon_prefix_path.split(os.pathsep)[0])
             if colcon_prefix_path is not None
             else None
         )
