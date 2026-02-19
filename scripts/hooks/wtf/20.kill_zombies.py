@@ -26,7 +26,7 @@ def _kill_processes(processes: list[psutil.Process], label: str) -> int:
         try:
             p.terminate()
         except psutil.NoSuchProcess:
-            count_killed += 1
+            pass
     gone, alive = psutil.wait_procs(processes, timeout=3)
     count_killed += len(gone)
     if alive:
@@ -37,7 +37,7 @@ def _kill_processes(processes: list[psutil.Process], label: str) -> int:
             try:
                 p.kill()
             except psutil.NoSuchProcess:
-                count_killed += 1
+                pass
         gone, alive = psutil.wait_procs(alive, timeout=3)
         count_killed += len(gone)
         if alive:
@@ -72,13 +72,18 @@ def _collect_parent_processes(
             ppid = p.ppid()
             if ppid not in seen_pids:
                 seen_pids.add(ppid)
-                parents.append(psutil.Process(ppid))
+                parent = psutil.Process(ppid)
+                if parent.name() not in ("ros2"):
+                    # Only kill whitelisted process parents, e.g. ros2 launch
+                    # Blindly killing them could hit important processes like systemd as orphans are reparented
+                    continue
+                parents.append(parent)
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
     return parents
 
 
-def _is_zombie_node(cmdline: list[str]) -> bool:
+def _is_ros_zombie_node(cmdline: list[str]) -> bool:
     """Heuristic check whether a command line belongs to a ROS node."""
     score = 1 if len(cmdline) > 5 else 0
     for item in cmdline:
@@ -105,7 +110,7 @@ def _get_process_label(p: psutil.Process) -> str:
     return name
 
 
-def fix() -> int:
+def fix() -> tuple[int, int]:
     print_header("Checking for zombies")
     gz_processes = []
     node_processes = []
@@ -120,34 +125,39 @@ def fix() -> int:
 
         if p.info["name"] == "ruby" and exe.startswith("gz sim"):
             gz_processes.append(p)
-        elif exe.startswith(_ROS_PREFIXES) and _is_zombie_node(cmdline):
+        elif exe.startswith(_ROS_PREFIXES) and _is_ros_zombie_node(cmdline):
             node_processes.append(p)
         elif (
             "python" in exe
             and len(cmdline) > 1
             and cmdline[1].startswith(_ROS_PREFIXES)
-            and _is_zombie_node(cmdline)
+            and _is_ros_zombie_node(cmdline)
         ):
             node_processes.append(p)
 
-    count_killed = 0
+    issues_found = 0
+    issues_resolved = 0
     if gz_processes:
         if not confirm(
             "Found gazebo processes. Are you expecting gazebo to be running?"
         ):
+            issues_found += 1
             print_error("Found gazebo zombies.")
             killed = _kill_with_parents(gz_processes, "gazebo processes")
-            print_info(f"Killed {killed} gazebo zombies.")
-            count_killed += killed
+            print_info(f"Killed {killed}/{len(gz_processes)} gazebo zombies.")
+            issues_resolved += 1 if killed == len(gz_processes) else 0
     if node_processes:
         if not confirm("Found ROS nodes. Are you expecting nodes to be running?"):
+            issues_found += 1
             print_error("Found node zombies.")
             for p in node_processes:
                 print(f"  Node: {_get_process_label(p)}")
-            count_killed += _kill_with_parents(node_processes, "node processes")
+            killed = _kill_with_parents(node_processes, "node processes")
+            print_info(f"Killed {killed}/{len(node_processes)} node zombies.")
+            issues_resolved += 1 if killed == len(node_processes) else 0
     if not gz_processes and not node_processes:
         print_info("No zombies found.")
-    return count_killed
+    return issues_found, issues_resolved
 
 
 if __name__ == "__main__":
