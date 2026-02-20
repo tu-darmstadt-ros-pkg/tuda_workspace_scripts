@@ -5,12 +5,14 @@ from tuda_workspace_scripts.workspace import *
 import argcomplete
 import argparse
 import os
+import re
+import shlex
 import subprocess
 import sys
 
 if __name__ == "__main__":
     workspace_root = get_workspace_root()
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
     packages_arg = parser.add_argument(
         "packages", nargs="*", help="If specified only these packages are built."
     )
@@ -42,6 +44,30 @@ if __name__ == "__main__":
         default=False,
         action="store_true",
         help="Automatically answer yes to all questions.",
+    )
+    parser.add_argument(
+        "--list-tests",
+        default=False,
+        action="store_true",
+        help="List available tests instead of running them.",
+    )
+    parser.add_argument(
+        "--test",
+        type=str,
+        default=None,
+        help=(
+            "Run only tests matching the given name or pattern.\n"
+            "Examples:\n"
+            "  Single test:    --test TestPrefix.MyTestName\n"
+            '  Multiple tests: --test "TestA|TestB" (CTest) or --test "TestA or TestB" (PyTest)\n'
+            "  Substring:      --test TestPrefix"
+        ),
+    )
+    parser.add_argument(
+        "--names-only",
+        default=False,
+        action="store_true",
+        help="When listing tests, only output the test names.",
     )
 
     argcomplete.autocomplete(parser)
@@ -106,7 +132,10 @@ if __name__ == "__main__":
         print_error(">>> Failed to build packages")
         exit(returncode)
 
-    print_info(">>> Running tests")
+    if args.list_tests:
+        print_info(">>> Listing tests")
+    else:
+        print_info(f">>> Running tests{' (filtered)' if args.test else ''}")
     colcon_test_args = []
     if build_folder is not None:
         colcon_test_args.extend(["--build-base", build_folder])
@@ -115,13 +144,44 @@ if __name__ == "__main__":
     if len(packages) > 0:
         colcon_test_args.extend(["--packages-select"] + packages)
 
+    if args.list_tests:
+        colcon_test_args.extend(
+            [
+                "--event-handlers",
+                "console_cohesion+",
+                "--ctest-args",
+                "-N",
+                "--pytest-args",
+                "--collect-only",
+            ]
+        )
+    elif args.test:
+        colcon_test_args.extend(
+            ["--ctest-args", "-R", args.test, "--pytest-args", "-k", args.test]
+        )
+
+    use_pipe = args.list_tests and args.names_only
     command = subprocess.run(
         f". {install_folder}/setup.sh && colcon test {' '.join(colcon_test_args)}",
-        stdout=sys.stdout,
+        stdout=subprocess.PIPE if use_pipe else sys.stdout,
         stderr=sys.stderr,
         shell=True,
+        text=True if use_pipe else False,
     )
     returncode = command.returncode
+
+    if args.list_tests:
+        if args.names_only and command.stdout:
+            for line in command.stdout.splitlines():
+                line = line.strip()
+                # Extract name from "Test  #1: Interpolation.bilinear" or "Test #30: DataLayerTest.memoryUsage"
+                match = re.match(r"^Test\s+#\d+:\s*(.*)", line)
+                if match:
+                    print(match.group(1).strip())
+                elif "::" in line:
+                    # Pytest collected name
+                    print(line)
+        sys.exit(returncode)
 
     build_folder = build_folder or "build"
     if len(packages) > 0:
