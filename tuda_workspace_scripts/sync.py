@@ -1,7 +1,8 @@
 import shlex
 import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from .print import (
     Colors,
@@ -15,6 +16,16 @@ from .print import (
 )
 from .robots import RemotePC, load_robots
 from .workspace import get_package_path
+
+
+@dataclass
+class RemotePackageInfo:
+    """Pre-fetched info about a package on a remote machine."""
+
+    path: Optional[Path] = None
+    branch: Optional[str] = None
+    dirty: Optional[bool] = None
+    changed_files: List[str] = field(default_factory=list)
 
 
 def _resolve_target(target_name: str) -> RemotePC:
@@ -72,19 +83,6 @@ def _run_ssh_command(
         return None
 
 
-def _get_package_path_on_remote(ssh_command: str, package: str) -> Optional[Path]:
-    """Resolve a package path on a remote machine via SSH."""
-    safe_package = shlex.quote(package)
-    remote_script = f"bash -i -c 'python3 $TUDA_WSS_BASE_SCRIPTS/helpers/get_package_path.py {safe_package}'"
-    result = _run_ssh_command(ssh_command, remote_script)
-    if result is None:
-        return None
-    output_lines = result.stdout.strip().splitlines()
-    if not output_lines:
-        return None
-    return Path(output_lines[-1].strip())
-
-
 def _get_workspace_on_remote(ssh_command: str) -> Optional[str]:
     """Get the workspace root path on a remote machine via SSH."""
     result = _run_ssh_command(
@@ -101,72 +99,139 @@ def _get_workspace_on_remote(ssh_command: str) -> Optional[str]:
     return remote_ws
 
 
-def _get_uncommitted_changes_on_remote(
-    ssh_command: str, package_path: str
-) -> Tuple[Optional[bool], List[str]]:
+def _batch_query_remote(
+    ssh_command: str, packages: List[str]
+) -> Dict[str, RemotePackageInfo]:
     """
-    Check if a package directory on a remote has uncommitted changes.
+    Resolve all packages on a remote in a single SSH call.
 
-    Uses git status --porcelain scoped to the package directory.
-    Returns (is_dirty, changed_files) where is_dirty is None on error.
+    For each package, fetches: path, git branch, git status (dirty files).
+    Uses a delimiter-based protocol to parse the combined output.
     """
-    safe_path = shlex.quote(package_path)
-    remote_script = f"cd {safe_path} && git status --porcelain -- {safe_path}"
+    DELIM = "---SYNC_PKG_DELIM---"
+    # Build a shell script that processes each package
+    # For each package:
+    #   1. Resolve path via the helper script
+    #   2. If path found and is a directory, get branch and dirty status
+    #   3. Print delimited output
+    script_parts = []
+    for package in packages:
+        safe_pkg = shlex.quote(package)
+        script_parts.append(
+            f"""
+PKG_PATH=$(python3 $TUDA_WSS_BASE_SCRIPTS/helpers/get_package_path.py {safe_pkg} 2>/dev/null)
+echo "PATH:$PKG_PATH"
+if [ -n "$PKG_PATH" ] && [ -d "$PKG_PATH" ]; then
+    BRANCH=$(cd "$PKG_PATH" && git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    echo "BRANCH:$BRANCH"
+    STATUS=$(cd "$PKG_PATH" && git status --porcelain -- "$PKG_PATH" 2>/dev/null)
+    echo "STATUS_BEGIN"
+    [ -n "$STATUS" ] && echo "$STATUS"
+    echo "STATUS_END"
+else
+    echo "BRANCH:"
+    echo "STATUS_BEGIN"
+    echo "STATUS_END"
+fi
+echo "{DELIM}"
+"""
+        )
+
+    combined_script = "\n".join(script_parts)
+    remote_script = f"bash -i -c {shlex.quote(combined_script)}"
+
     result = _run_ssh_command(ssh_command, remote_script)
     if result is None:
-        return None, []
-    lines = [line for line in result.stdout.strip().splitlines() if line]
-    return len(lines) > 0, lines
+        return {pkg: RemotePackageInfo() for pkg in packages}
+
+    # Parse output — split by delimiter, one block per package
+    output = result.stdout
+    blocks = output.split(DELIM)
+
+    results: Dict[str, RemotePackageInfo] = {}
+    for i, package in enumerate(packages):
+        info = RemotePackageInfo()
+        if i >= len(blocks):
+            results[package] = info
+            continue
+
+        block = blocks[i]
+        lines = block.strip().splitlines()
+
+        in_status = False
+        status_lines: List[str] = []
+
+        for line in lines:
+            if line.startswith("PATH:"):
+                path_str = line[5:].strip()
+                if path_str:
+                    info.path = Path(path_str)
+            elif line.startswith("BRANCH:"):
+                branch_str = line[7:].strip()
+                if branch_str:
+                    info.branch = branch_str
+            elif line == "STATUS_BEGIN":
+                in_status = True
+            elif line == "STATUS_END":
+                in_status = False
+            elif in_status and line.strip():
+                status_lines.append(line)
+
+        info.changed_files = status_lines
+        info.dirty = len(status_lines) > 0 if info.path else None
+        results[package] = info
+
+    return results
 
 
-def _get_uncommitted_changes_locally(
-    package_path: str,
-) -> Tuple[Optional[bool], List[str]]:
-    """
-    Check if a local package directory has uncommitted changes.
+@dataclass
+class LocalPackageInfo:
+    """Pre-fetched info about a package on the local machine."""
 
-    Returns (is_dirty, changed_files) where is_dirty is None on error.
-    """
-    try:
-        result = subprocess.run(
-            ["git", "-C", package_path, "status", "--porcelain", "--", package_path],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        lines = [line for line in result.stdout.strip().splitlines() if line]
-        return len(lines) > 0, lines
-    except subprocess.CalledProcessError:
-        return None, []
+    path: Optional[Path] = None
+    branch: Optional[str] = None
+    dirty: Optional[bool] = None
+    changed_files: List[str] = field(default_factory=list)
 
 
-def _get_git_branch_on_remote(ssh_command: str, package_path: str) -> Optional[str]:
-    """Get the current git branch for a package directory on a remote machine."""
-    safe_path = shlex.quote(package_path)
-    result = _run_ssh_command(
-        ssh_command, f"cd {safe_path} && git rev-parse --abbrev-ref HEAD"
-    )
-    if result is None:
-        return None
-    output = result.stdout.strip()
-    return output if output else None
+def _batch_query_local(
+    packages: List[str], workspace_root: str
+) -> Dict[str, LocalPackageInfo]:
+    """Resolve all packages locally."""
+    results: Dict[str, LocalPackageInfo] = {}
 
+    for package in packages:
+        info = LocalPackageInfo()
+        path_str = get_package_path(package, workspace_root)
+        if path_str:
+            info.path = Path(path_str)
+            try:
+                result = subprocess.run(
+                    ["git", "-C", path_str, "rev-parse", "--abbrev-ref", "HEAD"],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                info.branch = result.stdout.strip() or None
+            except subprocess.CalledProcessError:
+                pass
+            try:
+                result = subprocess.run(
+                    ["git", "-C", path_str, "status", "--porcelain", "--", path_str],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                lines = [l for l in result.stdout.strip().splitlines() if l]
+                info.changed_files = lines
+                info.dirty = len(lines) > 0
+            except subprocess.CalledProcessError:
+                pass
+        results[package] = info
 
-def _get_git_branch_locally(package_path: str) -> Optional[str]:
-    """Get the current git branch for a local package directory."""
-    try:
-        result = subprocess.run(
-            ["git", "-C", package_path, "rev-parse", "--abbrev-ref", "HEAD"],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        output = result.stdout.strip()
-        return output if output else None
-    except subprocess.CalledProcessError:
-        return None
+    return results
 
 
 def _print_changed_files(changed_files: List[str]) -> None:
@@ -261,6 +326,10 @@ def sync(
         )
         return 1
 
+    source_label = from_target if from_target else "local"
+    dest_label = to_target if to_target else "local"
+    print_info(f"Syncing: {source_label} -> {dest_label}")
+
     # Resolve workspace roots
     if source_ssh is not None:
         print_info(f"Resolving workspace on source ({from_target})...")
@@ -283,6 +352,18 @@ def sync(
     # Deduplicate packages while preserving order
     packages = list(dict.fromkeys(packages))
 
+    # Batch-query all package info upfront (1 SSH call per remote side)
+    print_info("Resolving packages...")
+    if source_ssh is not None:
+        source_info = _batch_query_remote(source_ssh, packages)
+    else:
+        source_info = _batch_query_local(packages, source_workspace)
+
+    if dest_ssh is not None:
+        dest_info = _batch_query_remote(dest_ssh, packages)
+    else:
+        dest_info = _batch_query_local(packages, dest_workspace)
+
     failed: List[str] = []
     skipped: List[str] = []
     succeeded: List[str] = []
@@ -290,30 +371,19 @@ def sync(
     for package in packages:
         print_header(f"Syncing: {package}")
 
-        # Resolve source package path
-        if source_ssh is not None:
-            source_pkg_path = _get_package_path_on_remote(source_ssh, package)
-        else:
-            result = get_package_path(package, source_workspace)
-            source_pkg_path = Path(result) if result else None
+        src = source_info[package]
+        dst = dest_info[package]
 
-        if source_pkg_path is None:
+        if src.path is None:
             print_error(f"Package '{package}' not found on source.")
             failed.append(package)
             continue
 
-        # Resolve destination package path
-        if dest_ssh is not None:
-            dest_pkg_path = _get_package_path_on_remote(dest_ssh, package)
-        else:
-            result = get_package_path(package, dest_workspace)
-            dest_pkg_path = Path(result) if result else None
-
-        if dest_pkg_path is None:
+        if dst.path is None:
             # Package does not exist on destination — derive path from source
             source_src = Path(source_workspace) / "src"
             try:
-                source_rel = source_pkg_path.relative_to(source_src)
+                source_rel = src.path.relative_to(source_src)
             except ValueError:
                 print_error(
                     f"Package '{package}' is not inside src/ on the source. "
@@ -332,23 +402,13 @@ def sync(
                 skipped.append(package)
                 continue
         else:
+            dest_pkg_path = dst.path
+
             # Check if source and destination are on the same branch
-            if source_ssh is not None:
-                source_branch = _get_git_branch_on_remote(
-                    source_ssh, str(source_pkg_path)
-                )
-            else:
-                source_branch = _get_git_branch_locally(str(source_pkg_path))
-
-            if dest_ssh is not None:
-                dest_branch = _get_git_branch_on_remote(dest_ssh, str(dest_pkg_path))
-            else:
-                dest_branch = _get_git_branch_locally(str(dest_pkg_path))
-
-            if source_branch and dest_branch and source_branch != dest_branch:
+            if src.branch and dst.branch and src.branch != dst.branch:
                 print_warn(
-                    f"Branch mismatch: source is on '{source_branch}', "
-                    f"destination is on '{dest_branch}'. "
+                    f"Branch mismatch: source is on '{src.branch}', "
+                    f"destination is on '{dst.branch}'. "
                     f"This may transfer more files than necessary."
                 )
                 if not confirm(f"Continue syncing '{package}'?"):
@@ -356,28 +416,19 @@ def sync(
                     skipped.append(package)
                     continue
 
-            # Package exists on destination — check for uncommitted changes
-            if dest_ssh is not None:
-                has_changes, changed_files = _get_uncommitted_changes_on_remote(
-                    dest_ssh, str(dest_pkg_path)
-                )
-            else:
-                has_changes, changed_files = _get_uncommitted_changes_locally(
-                    str(dest_pkg_path)
-                )
-
-            if has_changes is None:
+            # Check for uncommitted changes on destination
+            if dst.dirty is None:
                 print_error(
                     f"Could not check git status for '{package}' on destination. Skipping."
                 )
                 failed.append(package)
                 continue
 
-            if has_changes:
+            if dst.dirty:
                 print_warn(
                     f"Package '{package}' has uncommitted changes on the destination:"
                 )
-                _print_changed_files(changed_files)
+                _print_changed_files(dst.changed_files)
 
                 if not confirm(f"Overwrite changes in '{package}' on destination?"):
                     print_info(f"Skipping {package}.")
@@ -386,7 +437,7 @@ def sync(
 
         # Build and run rsync
         rsync_cmd = _build_rsync_command(
-            source_path=str(source_pkg_path),
+            source_path=str(src.path),
             dest_path=str(dest_pkg_path),
             source_pc=source_pc,
             dest_pc=dest_pc,
