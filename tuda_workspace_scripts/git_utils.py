@@ -29,11 +29,10 @@ import signal
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 try:
     import git
-    from git import Repo
 except ImportError as e:
     raise ImportError(
         "GitPython is required! Install using 'pip3 install --user gitpython' or 'apt install python3-git'"
@@ -76,7 +75,7 @@ class RepoStatus:
         local_only_branches: Branch names with no upstream configured.
         deleted_upstream_branches: Tuples of (branch_name, merge_hint) for
             branches whose upstream was deleted.
-        is_clean: Whether the repository is in a clean state.
+        is_clean: Whether the repository is in a clean state (inverse of has_changes).
     """
 
     rel_path: str
@@ -97,7 +96,10 @@ class RepoStatus:
     local_only_branches: List[str] = field(default_factory=list)
     deleted_upstream_branches: List[Tuple[str, str]] = field(default_factory=list)
 
-    is_clean: bool = True
+    @property
+    def is_clean(self) -> bool:
+        """Whether the repository is in a clean state (inverse of has_changes)."""
+        return not self.has_changes
 
 
 # =============================================================================
@@ -136,38 +138,35 @@ def launch_subprocess(
     env = os.environ.copy()
     env["GIT_TERMINAL_PROMPT"] = "0"
 
-    try:
-        with subprocess.Popen(
-            cmd,
-            cwd=str(cwd),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
-            env=env,
-        ) as process:
-            try:
-                stdout, stderr = process.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGTERM)
-                process.kill()
-                stdout, stderr = process.communicate()
-                return subprocess.CompletedProcess(
-                    process.args, 1, stdout or "", stderr or "Command timed out"
-                )
-            except KeyboardInterrupt:
-                os.killpg(process.pid, signal.SIGINT)
-                try:
-                    process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                raise
-
+    with subprocess.Popen(
+        cmd,
+        cwd=str(cwd),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+        env=env,
+    ) as process:
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGTERM)
+            process.kill()
+            stdout, stderr = process.communicate()
             return subprocess.CompletedProcess(
-                process.args, process.returncode, stdout, stderr
+                process.args, 1, stdout or "", stderr or "Command timed out"
             )
-    except KeyboardInterrupt:
-        raise
+        except KeyboardInterrupt:
+            os.killpg(process.pid, signal.SIGINT)
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+            raise
+
+        return subprocess.CompletedProcess(
+            process.args, process.returncode, stdout, stderr
+        )
 
 
 # =============================================================================
@@ -175,7 +174,7 @@ def launch_subprocess(
 # =============================================================================
 
 
-def get_repo_root(path: Path, workspace_src: Path) -> Optional[Path]:
+def get_repo_root(path: Path, workspace_src: Path) -> Path | None:
     """Find the git repository root for a path within workspace boundaries.
 
     This function searches for the git working tree root of the given path,
@@ -204,7 +203,7 @@ def get_repo_root(path: Path, workspace_src: Path) -> Optional[Path]:
         return None
 
     try:
-        repo = Repo(current, search_parent_directories=True)
+        repo = git.Repo(current, search_parent_directories=True)
         repo_root = Path(repo.working_tree_dir).resolve()
     except (git.exc.InvalidGitRepositoryError, git.exc.NoSuchPathError):
         return None
@@ -263,10 +262,9 @@ def get_remote_head_mainline(
 
     if auto_set:
         try:
-            subprocess.run(
+            launch_subprocess(
                 ["git", "remote", "set-head", remote_name, "-a"],
                 cwd=repo.working_tree_dir,
-                capture_output=True,
                 timeout=10,
             )
             return try_resolve()
@@ -441,7 +439,7 @@ def find_merge_evidence(
                         return True, f"merged into {target} (squashed)"
 
         return False, f"merge into {target} unverified"
-    except Exception:
+    except (KeyError, IndexError, git.exc.GitCommandError, ValueError):
         pass  # Branch or mainline ref invalid; report as unverified
 
     return False, f"merge into {mainline} unverified"
@@ -535,7 +533,7 @@ def get_deleted_branch_status(
 
 
 # =============================================================================
-# REPOSITORY STATUS PRINTING
+# REPOSITORY STATUS
 # =============================================================================
 
 
@@ -575,9 +573,7 @@ def get_repo_status(
     try:
         stash = repo.git.stash("list")
         stash_count = len(stash.splitlines()) if stash else 0
-    except git.exc.GitCommandError as e:
-        if "not a git repository" in e.stderr:
-            return RepoStatus(rel_path=rel_path, branch=branch_name, is_git=False)
+    except git.exc.GitCommandError:
         return RepoStatus(rel_path=rel_path, branch=branch_name, is_git=False)
     except Exception:
         stash_count = 0
@@ -614,18 +610,14 @@ def get_repo_status(
             deleted_branches.append((branch.name, hint))
             continue
         try:
-            # Count unpushed commits using iter_commits logic
-            if any(
-                True for _ in repo.iter_commits(f"{branch.name}@{{u}}..{branch.name}")
-            ):
-                # To get the count we can use len or rev_list count
-                count = int(
-                    repo.git.rev_list("--count", f"{tracking.name}..{branch.name}")
-                )
+            count = int(
+                repo.git.rev_list("--count", f"{tracking.name}..{branch.name}").strip()
+                or "0"
+            )
+            if count > 0:
                 unpushed_branches.append((branch.name, count))
         except Exception as e:
-            error_msg = getattr(e, "message", str(e))
-            print_error(f"{repo_path} has error on branch {branch.name}: {error_msg}")
+            print_error(f"{repo_path} has error on branch {branch.name}: {e}")
 
     # Determine if there's anything to report
     untracked = list(repo.untracked_files)
@@ -637,29 +629,29 @@ def get_repo_status(
         or stash_count > 0
         or bool(unpushed_branches)
         or bool(local_only_branches)
-        or bool(deleted_branches)
+        or any("merged" not in hint for _, hint in deleted_branches)
         or bool(changes)
     )
 
     # Build changes_summary
-    changes_summary_str: List[str] = []
+    changes_summary: List[str] = []
     for item in changes:
         if item.change_type.startswith("M"):
-            changes_summary_str.append(f"Modified: {item.a_path}")
+            changes_summary.append(f"Modified: {item.a_path}")
         elif item.change_type.startswith("D"):
-            changes_summary_str.append(f"Deleted: {item.a_path}")
+            changes_summary.append(f"Deleted: {item.a_path}")
         elif item.change_type.startswith("R"):
-            changes_summary_str.append(f"Renamed: {item.a_path} -> {item.b_path}")
+            changes_summary.append(f"Renamed: {item.a_path} -> {item.b_path}")
         elif item.change_type.startswith("A"):
-            changes_summary_str.append(f"Added: {item.a_path}")
+            changes_summary.append(f"Added: {item.a_path}")
         elif item.change_type.startswith("U"):
-            changes_summary_str.append(f"Unmerged: {item.a_path}")
+            changes_summary.append(f"Unmerged: {item.a_path}")
         elif item.change_type.startswith("C"):
-            changes_summary_str.append(f"Copied: {item.a_path} -> {item.b_path}")
+            changes_summary.append(f"Copied: {item.a_path} -> {item.b_path}")
         elif item.change_type.startswith("T"):
-            changes_summary_str.append(f"Type changed: {item.a_path}")
+            changes_summary.append(f"Type changed: {item.a_path}")
         else:
-            changes_summary_str.append(
+            changes_summary.append(
                 f"Unhandled change type '{item.change_type}': {item.a_path}"
             )
 
@@ -672,12 +664,11 @@ def get_repo_status(
         untracked_count=untracked_count,
         untracked_files=untracked,
         stash_count=stash_count,
-        changes_summary=changes_summary_str,
+        changes_summary=changes_summary,
         has_branches=has_branches,
         unpushed_branches=unpushed_branches,
         local_only_branches=local_only_branches,
         deleted_upstream_branches=deleted_branches,
-        is_clean=not has_issues,
     )
 
 
