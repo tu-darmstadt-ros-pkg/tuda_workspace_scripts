@@ -45,14 +45,6 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--force",
-        "-f",
-        default=False,
-        action="store_true",
-        help="Overwrite uncommitted changes on the destination.",
-    )
-
-    parser.add_argument(
         "--no-gitignore-filter",
         default=False,
         action="store_true",
@@ -77,7 +69,6 @@ if __name__ == "__main__":
             from_target=args.from_target,
             to_target=args.to_target,
             dry_run=args.dry_run,
-            force=args.force,
             use_gitignore_filter=not args.no_gitignore_filter,
         )
     )
