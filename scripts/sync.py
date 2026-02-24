@@ -77,15 +77,16 @@ if __name__ == "__main__":
 
     packages = args.packages or []
     if args.this:
-        packages = find_packages_in_directory(os.getcwd())
-        if not packages:
+        this_packages = find_packages_in_directory(os.getcwd())
+        if not this_packages:
             package = find_package_containing(os.getcwd())
-            packages = [package] if package else []
-        if not packages:
+            this_packages = [package] if package else []
+        if not this_packages:
             print_error(
                 "No package found in the current directory or containing the current directory!"
             )
             exit(1)
+        packages = packages + this_packages
 
     if not packages:
         print_error("No packages specified. Use package names or --this.")

@@ -19,8 +19,8 @@ from .workspace import get_package_path
 
 
 @dataclass
-class RemotePackageInfo:
-    """Pre-fetched info about a package on a remote machine."""
+class PackageInfo:
+    """Pre-fetched info about a package (local or remote)."""
 
     path: Optional[Path] = None
     branch: Optional[str] = None
@@ -101,7 +101,7 @@ def _get_workspace_on_remote(ssh_command: str) -> Optional[str]:
 
 def _batch_query_remote(
     ssh_command: str, packages: List[str]
-) -> Dict[str, RemotePackageInfo]:
+) -> Dict[str, PackageInfo]:
     """
     Resolve all packages on a remote in a single SSH call.
 
@@ -119,8 +119,8 @@ def _batch_query_remote(
         safe_pkg = shlex.quote(package)
         script_parts.append(
             f"""
-PKG_PATH=$(python3 $TUDA_WSS_BASE_SCRIPTS/helpers/get_package_path.py {safe_pkg} 2>/dev/null)
-echo "PATH:$PKG_PATH"
+PKG_PATH=$(python3 "$TUDA_WSS_BASE_SCRIPTS/helpers/get_package_path.py" {safe_pkg} 2>/dev/null)
+echo "PKG_PATH:$PKG_PATH"
 if [ -n "$PKG_PATH" ] && [ -d "$PKG_PATH" ]; then
     BRANCH=$(cd "$PKG_PATH" && git rev-parse --abbrev-ref HEAD 2>/dev/null)
     echo "BRANCH:$BRANCH"
@@ -142,15 +142,15 @@ echo "{DELIM}"
 
     result = _run_ssh_command(ssh_command, remote_script)
     if result is None:
-        return {pkg: RemotePackageInfo() for pkg in packages}
+        return {pkg: PackageInfo() for pkg in packages}
 
     # Parse output — split by delimiter, one block per package
     output = result.stdout
     blocks = output.split(DELIM)
 
-    results: Dict[str, RemotePackageInfo] = {}
+    results: Dict[str, PackageInfo] = {}
     for i, package in enumerate(packages):
-        info = RemotePackageInfo()
+        info = PackageInfo()
         if i >= len(blocks):
             results[package] = info
             continue
@@ -162,8 +162,8 @@ echo "{DELIM}"
         status_lines: List[str] = []
 
         for line in lines:
-            if line.startswith("PATH:"):
-                path_str = line[5:].strip()
+            if line.startswith("PKG_PATH:"):
+                path_str = line[9:].strip()
                 if path_str:
                     info.path = Path(path_str)
             elif line.startswith("BRANCH:"):
@@ -184,24 +184,14 @@ echo "{DELIM}"
     return results
 
 
-@dataclass
-class LocalPackageInfo:
-    """Pre-fetched info about a package on the local machine."""
-
-    path: Optional[Path] = None
-    branch: Optional[str] = None
-    dirty: Optional[bool] = None
-    changed_files: List[str] = field(default_factory=list)
-
-
 def _batch_query_local(
     packages: List[str], workspace_root: str
-) -> Dict[str, LocalPackageInfo]:
+) -> Dict[str, PackageInfo]:
     """Resolve all packages locally."""
-    results: Dict[str, LocalPackageInfo] = {}
+    results: Dict[str, PackageInfo] = {}
 
     for package in packages:
-        info = LocalPackageInfo()
+        info = PackageInfo()
         path_str = get_package_path(package, workspace_root)
         if path_str:
             info.path = Path(path_str)
