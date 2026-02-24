@@ -5,6 +5,7 @@ from typing import List
 from .build import clean_packages
 from .git_utils import (
     get_repo_root,
+    get_repo_status,
     launch_subprocess,
     print_repo_status,
 )
@@ -90,33 +91,26 @@ def remove_packages(
             launch_subprocess(
                 ["git", "fetch", "--prune", "--all", "--quiet"],
                 cwd=repo_root,
-                timeout=30,
+                timeout=180,
             )  # Fetch is optional; failures handled gracefully by launch_subprocess
 
-        status = print_repo_status(repo_root, workspace_root, always_print_header=True)
+        status = get_repo_status(repo_root, workspace_root)
+        print_repo_status(status, always_print_header=True)
 
         print("Packages in this repo:")
         for p in sorted(packages):
             print(f"  - {p}")
 
-        if status:
+        if not status.is_git:
+            print_warn("Could not determine repository status.")
+            has_local_work = True  # Assume there might be local work
+        else:
             unmerged_deleted = [
                 b
                 for b, hint in status.deleted_upstream_branches
                 if "merged" not in hint
             ]
-            has_local_work = (
-                bool(status.changes_summary)
-                or status.untracked_count > 0
-                or status.stash_count > 0
-                or bool(unmerged_deleted)
-                or bool(status.unpushed_branches)
-                or bool(status.local_only_branches)
-            )
-        else:
-            # Failed to get status - warn user and require confirmation
-            print_warn("Could not determine repository status.")
-            has_local_work = True  # Assume there might be local work
+            has_local_work = status.has_changes or bool(unmerged_deleted)
 
         if has_local_work:
             print_error(
