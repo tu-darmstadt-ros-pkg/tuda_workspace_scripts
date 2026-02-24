@@ -26,12 +26,11 @@ from tuda_workspace_scripts.print import (
     Colors,
     print_workspace_error,
 )
-from tuda_workspace_scripts.workspace import get_workspace_root
+from tuda_workspace_scripts.workspace import get_workspace_root, get_repos_in_workspace
 from tuda_workspace_scripts.git_utils import (
     launch_subprocess,
     get_remote_head_mainline,
     get_deleted_branch_status,
-    collect_repos,
 )
 
 try:
@@ -98,7 +97,9 @@ def process_repo(repo_path: Path) -> RepoResult:
     """Fetch, optional pull, stale-branch detection - runs in a thread."""
     try:
         # 1. Subprocess Fetch (Side effect: updates refs on disk)
-        fetch = launch_subprocess(["git", "fetch", "--all", "--prune"], cwd=repo_path)
+        fetch = launch_subprocess(
+            ["git", "fetch", "--all", "--prune"], cwd=repo_path, timeout=120
+        )
         fetch_ok = fetch.returncode == 0
 
         # 2. Instantiate GitPython Repo object NOW, after fetch,
@@ -217,7 +218,7 @@ def update(**_) -> bool:
     ws_src = Path(ws_root) / "src"
     print_header(f"Updating every git repo under {ws_src}")
 
-    repos = collect_repos(ws_src)
+    repos = [Path(p) for p in get_repos_in_workspace(ws_root)]
     if not repos:
         print_info("No git repositories found.")
         return True

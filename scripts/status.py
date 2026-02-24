@@ -8,17 +8,14 @@ including uncommitted changes, unpushed commits, and branch information.
 """
 from pathlib import Path
 
-from tuda_workspace_scripts.git_utils import (
-    collect_repos,
-    print_repo_status,
-)
+from tuda_workspace_scripts.git_utils import get_repo_status, print_repo_status
 from tuda_workspace_scripts.print import (
     print_error,
     print_color,
     print_workspace_error,
     Colors,
 )
-from tuda_workspace_scripts.workspace import get_workspace_root
+from tuda_workspace_scripts.workspace import get_workspace_root, get_repos_in_workspace
 
 
 def main() -> int:
@@ -33,16 +30,16 @@ def main() -> int:
     # Check workspace root itself if it's a git repo
     if (ws_root / ".git").is_dir():
         print_color(Colors.GREEN, f"Looking for changes in {ws_root}...")
-        print_repo_status(ws_root, ws_root)
+        print_repo_status(get_repo_status(ws_root, ws_root))
 
     # Scan workspace src directory
     ws_src = ws_root / "src"
     print_color(Colors.GREEN, f"Looking for changes in {ws_src}...")
 
     # Use helper to collect all repos
-    repos = collect_repos(ws_src)
+    repos = get_repos_in_workspace(str(ws_root))
     for repo_path in sorted(repos):
-        print_repo_status(repo_path, ws_src)
+        print_repo_status(get_repo_status(Path(repo_path), ws_src))
 
     return 0
 

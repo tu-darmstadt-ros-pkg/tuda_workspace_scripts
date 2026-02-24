@@ -113,7 +113,8 @@ def get_repos_in_workspace(workspace_path=None):
         # Check for Git repository
         if ".git" in dirnames:
             repos.append(dirpath)
-            dirnames.remove(".git")
+            dirnames[:] = []  # Don't recurse into the repo
+            continue
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
     return repos
 
@@ -213,11 +214,11 @@ class CombinedPackageReposCompleter:
         if self.workspace_path is None:
             return []
         packages = get_packages_in_workspace(self.workspace_path)
-        repos = []
-        for repo_path in get_repos_in_workspace(self.workspace_path):
-            repo_name = os.path.basename(repo_path)
-            repos.append(repo_name)
-        return packages + repos
+        repos = {
+            os.path.basename(repo_path)
+            for repo_path in get_repos_in_workspace(self.workspace_path)
+        }
+        return list(set(packages) | repos)
 
 
 if __name__ == "__main__":
