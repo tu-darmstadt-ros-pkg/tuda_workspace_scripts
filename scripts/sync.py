@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 # PYTHON_ARGCOMPLETE_OK
 import argparse
+import os
+
 import argcomplete
 
 from ssh import RemotePCChoicesCompleter
 from tuda_workspace_scripts import get_workspace_root
-from tuda_workspace_scripts.workspace import PackageChoicesCompleter
+from tuda_workspace_scripts.workspace import (
+    PackageChoicesCompleter,
+    find_package_containing,
+    find_packages_in_directory,
+)
 from tuda_workspace_scripts.print import print_error, print_workspace_error
-from tuda_workspace_scripts.synchronize import sync
+from tuda_workspace_scripts.sync import sync
 
 
 if __name__ == "__main__":
@@ -17,9 +23,16 @@ if __name__ == "__main__":
     )
 
     pkg_arg = parser.add_argument(
-        "packages", nargs="+", help="The packages to synchronize."
+        "packages", nargs="*", help="The packages to synchronize."
     )
     pkg_arg.completer = PackageChoicesCompleter(workspace_root)
+
+    parser.add_argument(
+        "--this",
+        default=False,
+        action="store_true",
+        help="Sync the package(s) in the current directory.",
+    )
 
     from_arg = parser.add_argument(
         "--from",
@@ -62,10 +75,26 @@ if __name__ == "__main__":
         print_workspace_error()
         exit(1)
 
+    packages = args.packages or []
+    if args.this:
+        packages = find_packages_in_directory(os.getcwd())
+        if not packages:
+            package = find_package_containing(os.getcwd())
+            packages = [package] if package else []
+        if not packages:
+            print_error(
+                "No package found in the current directory or containing the current directory!"
+            )
+            exit(1)
+
+    if not packages:
+        print_error("No packages specified. Use package names or --this.")
+        exit(1)
+
     exit(
         sync(
             workspace_root=workspace_root,
-            packages=args.packages,
+            packages=packages,
             from_target=args.from_target,
             to_target=args.to_target,
             dry_run=args.dry_run,
