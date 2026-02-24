@@ -1,132 +1,57 @@
-import os
-import shutil
-import subprocess
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
 import shlex
+import subprocess
+from pathlib import Path
+from typing import List, Optional
 
-from .build import clean_packages
-from .print import Colors, confirm, print_error, print_info, print_warn, print_color
-from .workspace import find_packages_in_directory, get_package_path
-from .robots import load_robots
-
-try:
-    import git
-    from git import Repo
-except ImportError:
-    print_error("GitPython is required! Install using 'pip install gitpython'")
-    raise
-
-
-@dataclass
-class RepoStatus:
-    """Structured container for repository status."""
-
-    rel_path: str
-    branch: str
-    is_git: bool = False
-
-    # local changes / risks
-    has_changes: bool = False
-    untracked_count: int = 0
-    stash_count: int = 0
-    changes_summary: List[str] = field(default_factory=list)
-
-    # only meaningful if fetch_remotes=True
-    unpushed_branches: List[str] = field(default_factory=list)
-    local_only_branches: List[str] = field(default_factory=list)
-    deleted_upstream_branches: List[str] = field(default_factory=list)
-
-    is_clean: bool = True
+from .print import (
+    confirm,
+    print_error,
+    print_header,
+    print_info,
+    print_success,
+    print_warn,
+)
+from .robots import RemotePC, load_robots
+from .workspace import get_package_path
 
 
-def _get_repo_root(path: Path, workspace_src: Path) -> Optional[Path]:
+def _resolve_target(target_name: str) -> RemotePC:
     """
-    Return the git working tree root for `path`, but ONLY if the repo root is
-    inside `workspace_src` (or equals it). Otherwise return None.
+    Resolve a target name to a RemotePC using the robots.yaml configuration.
 
-    This prevents accidentally picking up e.g. /home/user as a repo root.
+    The target can be:
+      - A robot name (e.g. "athena") — only if the robot has exactly one PC.
+      - A PC name (e.g. "athena-main") — looked up across all robots.
+
+    Raises ValueError if the target cannot be resolved.
     """
-    workspace_src = workspace_src.resolve()
-    current = path.resolve()
+    robots = load_robots()
 
-    # must be within ws/src
-    if not current.is_relative_to(workspace_src):
-        return None
-
-    try:
-        repo = Repo(current, search_parent_directories=True)
-        repo_root = Path(repo.working_tree_dir).resolve()
-    except (git.exc.InvalidGitRepositoryError, git.exc.NoSuchPathError):
-        return None
-
-    # accept only if repo root is within ws/src (or equals)
-    if repo_root == workspace_src or repo_root.is_relative_to(workspace_src):
-        return repo_root
-
-    return None
-
-def _get_repo_root_on_remote(ssh_command: str, package_path: str) -> Optional[str]:
-    cmd_base = shlex.split(ssh_command)
-    remote_script = f"cd {package_path} && git rev-parse --show-toplevel"
-
-    full_command = cmd_base + [remote_script]
-
-    try:
-        result = subprocess.run(
-            full_command,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
+    if target_name in robots:
+        robot = robots[target_name]
+        if len(robot.remote_pcs) == 1:
+            return next(iter(robot.remote_pcs.values()))
+        raise ValueError(
+            f"Robot '{target_name}' has multiple PCs: {list(robot.remote_pcs.keys())}. "
+            f"Please specify a PC name directly."
         )
 
-        output_lines = result.stdout.strip().splitlines()
-        if not output_lines:
-            print_error(f"SSH command failed. Could not get remote repo root for package path {package_path}.")
-            return None
+    for robot in robots.values():
+        if target_name in robot.remote_pcs:
+            return robot.remote_pcs[target_name]
 
-        remote_repo_root = output_lines[-1].strip()
-        return Path(remote_repo_root)
+    raise ValueError(f"Target '{target_name}' not found in robot configuration.")
 
-    except subprocess.CalledProcessError as e:
-        print_error(f"SSH command failed. Could not get remote repo root for package path {package_path}.")
-        print_error(f"Stderr: {e.stderr.strip()}")
-        return None
 
-def _get_current_branch_on_remote(ssh_command: str, package_path: str) -> Optional[str]:
-    cmd_base = shlex.split(ssh_command)
-    remote_script = f"cd {package_path} && git rev-parse --abbrev-ref HEAD"
+def _build_ssh_command(pc: RemotePC) -> str:
+    """Build an SSH command string from a RemotePC."""
+    return f"ssh -p {pc.port} {pc.user}@{pc.hostname}"
 
-    full_command = cmd_base + [remote_script]
 
-    try:
-        result = subprocess.run(
-            full_command,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-
-        output_lines = result.stdout.strip().splitlines()
-        if not output_lines:
-            print_error(f"SSH command failed. Could not get current branch for package path {package_path}.")
-            return None
-
-        remote_branch = output_lines[-1].strip()
-        return remote_branch
-
-    except subprocess.CalledProcessError as e:
-        print_error(f"SSH command failed. Could not get current branch for package path {package_path}.")
-        print_error(f"Stderr: {e.stderr.strip()}")
-        return None
-
-def _get_package_path_on_remote(ssh_command: str, package: str) -> Optional[str]:
+def _get_package_path_on_remote(ssh_command: str, package: str) -> Optional[Path]:
+    """Resolve a package path on a remote machine via SSH."""
     cmd_base = shlex.split(ssh_command)
     remote_script = f"bash -i -c 'python3 $TUDA_WSS_BASE_SCRIPTS/helpers/get_package_path.py {package}'"
-
     full_command = cmd_base + [remote_script]
 
     try:
@@ -135,280 +60,21 @@ def _get_package_path_on_remote(ssh_command: str, package: str) -> Optional[str]
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True
+            text=True,
         )
-
         output_lines = result.stdout.strip().splitlines()
         if not output_lines:
-            print_error(f"SSH command failed. Could not get remote package path for package {package}.")
             return None
-
-        remote_package_path = output_lines[-1].strip()
-        return Path(remote_package_path)
-
-    except subprocess.CalledProcessError as e:
-        print_error(f"SSH command failed. Could not get remote package path for package {package}.")
-        print_error(f"Stderr: {e.stderr.strip()}")
+        return Path(output_lines[-1].strip())
+    except subprocess.CalledProcessError:
         return None
-
-def _collect_worktree_changes(repo: Repo) -> Tuple[List[str], int, int]:
-    """
-    Return (changes_summary, modified_count, untracked_count) using
-    `git status --porcelain` (robust, fast, works even if HEAD is unborn).
-    """
-    try:
-        out = repo.git.status("--porcelain=v1").splitlines()
-    except git.exc.GitCommandError:
-        out = []
-
-    changes_summary: List[str] = []
-    modified_count = 0
-    untracked_count = 0
-
-    for line in out:
-        if not line:
-            continue
-
-        # Untracked: "?? path"
-        if line.startswith("?? "):
-            untracked_count += 1
-            continue
-
-        # Format: XY <path> (or rename "R  old -> new")
-        xy = line[:2]
-        rest = line[3:] if len(line) > 3 else ""
-
-        modified_count += 1
-
-        # very simple labels (keep it readable)
-        if "R" in xy and "->" in rest:
-            changes_summary.append(f"Renamed: {rest}")
-        elif "D" in xy:
-            changes_summary.append(f"Deleted: {rest}")
-        elif "A" in xy:
-            changes_summary.append(f"Added: {rest}")
-        else:
-            changes_summary.append(f"Modified: {rest}")
-
-    return changes_summary, modified_count, untracked_count
-
-
-def _collect_repo_status(
-    repo_path: Path, workspace_root: Path, fetch: bool
-) -> RepoStatus:
-    rel_path = str(repo_path.relative_to(workspace_root))
-
-    try:
-        repo = Repo(repo_path)
-    except git.exc.InvalidGitRepositoryError:
-        return RepoStatus(rel_path=rel_path, branch="unknown", is_git=False)
-
-    # Branch info
-    try:
-        if repo.head.is_detached:
-            branch_name = f"detached ({repo.head.commit.hexsha[:7]})"
-        else:
-            branch_name = repo.active_branch.name
-    except Exception:
-        branch_name = "unknown"
-
-    # local working tree status
-    changes_summary, mod_count, untracked_count = _collect_worktree_changes(repo)
-
-    # stashes
-    stash_count = 0
-    try:
-        stash_out = repo.git.stash("list")
-        stash_count = len(stash_out.splitlines()) if stash_out else 0
-    except git.exc.GitCommandError:
-        stash_count = 0
-
-    # remote-related checks only if fetch=True (avoid lying when refs are stale)
-    unpushed: List[str] = []
-    local_only: List[str] = []
-    deleted_upstream: List[str] = []
-
-    if fetch:
-        for remote in repo.remotes:
-            try:
-                remote.fetch(prune=True)
-            except git.exc.GitCommandError as e:
-                print_warn(f"Fetch failed for {remote.name} in {rel_path}: {e}")
-
-        for branch in repo.branches:
-            tracking = branch.tracking_branch()
-            if not tracking:
-                local_only.append(branch.name)
-                continue
-
-            # tracking ref might still not exist locally; treat as deleted/unknown
-            try:
-                # "git show-ref --verify refs/remotes/..."
-                repo.git.show_ref(
-                    "--verify",
-                    f"refs/remotes/{tracking.remote_head}",
-                    with_exceptions=True,
-                )
-            except Exception:
-                # safer: just label as deleted/unknown if tracking cannot be verified after fetch
-                deleted_upstream.append(branch.name)
-                continue
-
-            try:
-                commits_ahead = int(
-                    repo.git.rev_list("--count", f"{tracking.name}..{branch.name}")
-                )
-                if commits_ahead > 0:
-                    unpushed.append(branch.name)
-            except Exception:
-                # ignore; keep script simple
-                pass
-
-    has_changes = (
-        (mod_count > 0)
-        or (untracked_count > 0)
-        or (stash_count > 0)
-        or bool(unpushed)
-        or bool(local_only)
-        or bool(deleted_upstream)
-    )
-
-    return RepoStatus(
-        rel_path=rel_path,
-        branch=branch_name,
-        is_git=True,
-        has_changes=has_changes,
-        untracked_count=untracked_count,
-        stash_count=stash_count,
-        unpushed_branches=unpushed,
-        local_only_branches=local_only,
-        deleted_upstream_branches=deleted_upstream,
-        changes_summary=changes_summary,
-        is_clean=not has_changes,
-    )
-
-
-def _print_status_report(status: RepoStatus, packages: List[str], fetched: bool):
-    print_info(f"Repo: {status.rel_path} ({status.branch})")
-
-    if not status.is_git:
-        print_warn("  [!] Not a git repository")
-        return
-
-    labels: List[str] = []
-    if status.is_clean:
-        labels.append("Clean")
-    else:
-        if status.changes_summary or status.untracked_count:
-            labels.append("Working tree dirty")
-        if status.stash_count:
-            labels.append("Stashed changes")
-        if fetched:
-            if status.unpushed_branches:
-                labels.append("Unpushed commits")
-            if status.local_only_branches:
-                labels.append("Local-only branches")
-            if status.deleted_upstream_branches:
-                labels.append("Upstream missing")
-        else:
-            if (
-                status.unpushed_branches
-                or status.local_only_branches
-                or status.deleted_upstream_branches
-            ):
-                # shouldn't happen, but keep logic consistent
-                labels.append("Remote status unknown")
-
-    print_info(f"Status: {', '.join(labels)}")
-
-    if status.has_changes:
-        if fetched:
-            for b in status.unpushed_branches:
-                print_color(Colors.RED, f"  Unpushed: {b}")
-            for b in status.local_only_branches:
-                print_color(Colors.LRED, f"  No Upstream: {b}")
-            for b in status.deleted_upstream_branches:
-                print_color(Colors.YELLOW, f"  Upstream Missing: {b}")
-        else:
-            # gentle hint
-            print_color(
-                Colors.LGRAY,
-                "  (Hint: run with fetch_remotes=True to check upstream state)",
-            )
-
-        for change in status.changes_summary[:50]:
-            print_color(Colors.ORANGE, f"  {change}")
-        if len(status.changes_summary) > 50:
-            print_color(
-                Colors.LGRAY, f"  ... +{len(status.changes_summary) - 50} more changes"
-            )
-
-        if status.untracked_count:
-            print_color(Colors.LGRAY, f"  {status.untracked_count} untracked files")
-        if status.stash_count:
-            print_color(Colors.LGRAY, f"  {status.stash_count} stash entries")
-
-    print("Packages in this repo:")
-    for p in sorted(packages):
-        print(f"  - {p}")
-
-def _create_git_diff_on_remote(ssh_command: str, repo_path: str) -> int:
-    cmd_base = shlex.split(ssh_command)
-    remote_script = f"cd {repo_path} && git diff > changes.diff && git diff"
-
-    full_command = cmd_base + [remote_script]
-
-    try:
-        out = subprocess.run(
-            full_command,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-
-        out_lines = out.stdout.strip().splitlines()
-        if not out_lines:
-            print_info(f"No changes found in {repo_path}")
-            return 1
-
-        diff = out_lines[-1].strip()
-        if not diff:
-            print_info(f"No changes found in {repo_path}")
-            return 1
-        return 0
-
-    except subprocess.CalledProcessError as e:
-        print_error(f"SSH command failed. Could not create git diff for repo path {repo_path}.")
-        print_error(f"Stderr: {e.stderr.strip()}")
-        return 1
-
-def _delete_git_diff_on_remote(ssh_command: str, repo_path: str) -> None:
-    cmd_base = shlex.split(ssh_command)
-    remote_script = f"cd {repo_path} && rm -f changes.diff"
-
-    full_command = cmd_base + [remote_script]
-
-    try:
-        subprocess.run(
-            full_command,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-
-    except subprocess.CalledProcessError as e:
-        print_error(f"SSH command failed. Could not delete git diff for repo path {repo_path}.")
-        print_error(f"Stderr: {e.stderr.strip()}")
 
 
 def _get_workspace_on_remote(ssh_command: str) -> Optional[str]:
+    """Get the workspace root path on a remote machine via SSH."""
     cmd_base = shlex.split(ssh_command)
     remote_script = "bash -ic 'echo $(_tuda_wss_get_workspace_root)'"
-
     full_command = cmd_base + [remote_script]
-    print_info(f"Getting remote workspace root via SSH...")
 
     try:
         result = subprocess.run(
@@ -416,246 +82,279 @@ def _get_workspace_on_remote(ssh_command: str) -> Optional[str]:
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True
+            text=True,
         )
-
         output_lines = result.stdout.strip().splitlines()
         if not output_lines:
-            print_error(f"SSH command failed. Could not get workspace root via SSH.")
             return None
-
         remote_ws = output_lines[-1].strip()
         if "/" not in remote_ws:
-            print_error(f"SSH command failed. Could not get workspace root via SSH.")
             return None
-        print_info(f"Remote workspace: {remote_ws}")
         return remote_ws
-
     except subprocess.CalledProcessError as e:
-        print_error(f"SSH command failed. Could not find the remote workspace.")
-        print_error(f"Stderr: {e.stderr.strip()}")
+        print_error(f"Could not determine remote workspace: {e.stderr.strip()}")
         return None
 
-    # cmd_base = shlex.split(ssh_command)
-    # remote_script = "echo $(_tuda_wss_get_workspace_root) \n"
-    #
-    # print_info(f"Getting remote workspace root via SSH...")
-    #
-    # try:
-    #     sshProcess = subprocess.Popen(
-    #         cmd_base,
-    #         stdin=subprocess.PIPE,
-    #         stdout=subprocess.PIPE,
-    #         stderr=subprocess.PIPE,
-    #         universal_newlines=True,
-    #         bufsize=0,
-    #         text=True,
-    #     )
-    #
-    #     sshProcess.stdin.write(remote_script)
-    #     sshProcess.stdin.write("exit\n")
-    #     sshProcess.stdin.close()
-    #
-    #     last_line = ""
-    #
-    #     for line in sshProcess.stdout:
-    #         if not line.strip():
-    #             continue
-    #         if "# exit" in line:
-    #             break
-    #         last_line = line
-    #         #print_info(line.strip())
-    #
-    #     remote_workspace_root = last_line.strip()
-    #     # check if output is empty or invalid
-    #     if not remote_workspace_root or "/" not in remote_workspace_root:
-    #         print_error(f"Could not determine remote workspace root.")
-    #         return None
-    #     print_info(f"Remote workspace root: {remote_workspace_root}")
-    #
-    #     exit()
-    #
-    #     return remote_workspace_root
-    #
-    # except subprocess.CalledProcessError as e:
-    #     print_error(f"SSH command failed. Could not get remote workspace root.")
-    #     print_error(f"Stderr: {e.stderr.strip()}")
-    #     return None
 
+def _check_uncommitted_changes_on_remote(
+    ssh_command: str, package_path: str
+) -> Optional[bool]:
+    """
+    Check if a package directory on a remote has uncommitted changes.
 
-def synchronize(
-    workspace_root_str: str, items: List[str], remote_name: str, port: int, fetch_remotes: bool = False
-) -> int:
-    ssh_command = "ssh -p {} {}".format(port, remote_name)
+    Uses git status --porcelain which shows staged, unstaged, and untracked files
+    but does NOT show stashes (stashes are fine per requirements).
 
-    if not workspace_root_str:
-        print_error("No workspace configured!")
-        return 1
+    Returns True if dirty, False if clean, None on error.
+    """
+    cmd_base = shlex.split(ssh_command)
+    remote_script = f"cd {shlex.quote(package_path)} && git status --porcelain"
+    full_command = cmd_base + [remote_script]
 
-    workspace_root = Path(workspace_root_str).resolve()
-    src_root = (workspace_root / "src").resolve()
-
-    if not items:
-        print_error("No packages specified.")
-        return 1
-
-    items = list(dict.fromkeys(items))  # deduplicate while preserving order
-
-    repo_map: Dict[Path, List[str]] = {}
-    repos_explicitly_selected: Set[Path] = set()
-    missing_items: List[str] = []
-
-    # 1) Resolve items to repos
-    for item in items:
-        pkg_path_str = get_package_path(item, str(workspace_root))
-
-        if pkg_path_str:
-            repo_root = _get_repo_root(Path(pkg_path_str), src_root)
-            if not repo_root:
-                print_error(f"Package '{item}' is not in a git repo within {src_root}.")
-                return 1
-            repo_map.setdefault(repo_root, [])
-            if item not in repo_map[repo_root]:
-                repo_map[repo_root].append(item)
-            continue
-
-        # treat as path (relative to ws or src)
-        candidate_ws = workspace_root / item
-        candidate_src = src_root / item
-
-        found_path: Optional[Path] = None
-        if candidate_ws.is_dir():
-            found_path = candidate_ws
-        elif candidate_src.is_dir():
-            found_path = candidate_src
-
-        if not found_path:
-            missing_items.append(item)
-            continue
-
-        real_repo = _get_repo_root(found_path, src_root)
-        if not real_repo:
-            print_error(f"Path '{item}' is not a git repository inside {src_root}.")
-            return 1
-
-        repos_explicitly_selected.add(real_repo)
-        repo_map.setdefault(real_repo, [])
-
-    if missing_items:
-        print_error(f"Not found: {', '.join(missing_items)}")
-        return 1
-
-    # 2) Determine final repos and packages to synchronize TODO: currently always all packages in repo, change to only requested ones?
-    final_repos_to_process: List[Tuple[Path, List[str]]] = []
-
-    for repo_root, requested_pkgs in repo_map.items():
-        all_pkgs_in_repo = find_packages_in_directory(str(repo_root))
-
-        if repo_root in repos_explicitly_selected:
-            final_repos_to_process.append((repo_root, all_pkgs_in_repo))
-            continue
-
-        final_repos_to_process.append((repo_root, all_pkgs_in_repo))
-
-    target_workspace = _get_workspace_on_remote(ssh_command)
-    if not target_workspace:
-        return 1
-
-    # 3) Execute synchronization
-    for repo_root, packages in final_repos_to_process:
-        repo_root = repo_root.resolve()
-        repo_rel = repo_root.relative_to(workspace_root)
-
-        status = _collect_repo_status(repo_root, workspace_root, fetch_remotes)
-        _print_status_report(status, packages, fetched=fetch_remotes)
-
-        # Decide whether to warn
-        has_uncommitted = bool(status.changes_summary) or status.untracked_count > 0
-        has_local_work = has_uncommitted or (status.stash_count > 0)
-        has_unpushed = bool(status.unpushed_branches) or bool(
-            status.local_only_branches
+    try:
+        result = subprocess.run(
+            full_command,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
         )
+        return len(result.stdout.strip()) > 0
+    except subprocess.CalledProcessError as e:
+        print_error(f"Failed to check git status on remote: {e.stderr.strip()}")
+        return None
 
-        if has_local_work or has_unpushed:
-            print_error("ERROR: local repro has local work (dirty/stash/unpushed).")
+
+def _check_uncommitted_changes_locally(package_path: str) -> Optional[bool]:
+    """
+    Check if a local package directory has uncommitted changes.
+
+    Returns True if dirty, False if clean, None on error.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", package_path, "status", "--porcelain"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        return len(result.stdout.strip()) > 0
+    except subprocess.CalledProcessError:
+        return None
+
+
+def _build_rsync_command(
+    source_path: str,
+    dest_path: str,
+    source_pc: Optional[RemotePC],
+    dest_pc: Optional[RemotePC],
+    dry_run: bool,
+    use_gitignore_filter: bool,
+) -> List[str]:
+    """
+    Build an rsync command for syncing a package directory.
+
+    Exactly one of source_pc/dest_pc may be non-None (local-to-remote or remote-to-local).
+    Both None means local-to-local. Both non-None raises ValueError.
+    """
+    if source_pc is not None and dest_pc is not None:
+        raise ValueError("Remote-to-remote sync is not supported.")
+
+    cmd = ["rsync", "-avz", "--delete", "--exclude=.*"]
+
+    if use_gitignore_filter:
+        cmd.append("--filter=:- .gitignore")
+
+    if dry_run:
+        cmd.append("--dry-run")
+
+    remote_pc = source_pc or dest_pc
+    if remote_pc is not None:
+        cmd.extend(["-e", f"ssh -p {remote_pc.port}"])
+
+    if source_pc is not None:
+        rsync_source = f"{source_pc.user}@{source_pc.hostname}:{source_path}/"
+    else:
+        rsync_source = f"{source_path}/"
+
+    if dest_pc is not None:
+        rsync_dest = f"{dest_pc.user}@{dest_pc.hostname}:{dest_path}/"
+    else:
+        rsync_dest = f"{dest_path}/"
+
+    cmd.append(rsync_source)
+    cmd.append(rsync_dest)
+    return cmd
+
+
+def sync(
+    workspace_root: str,
+    packages: List[str],
+    from_target: Optional[str],
+    to_target: Optional[str],
+    dry_run: bool = False,
+    force: bool = False,
+    use_gitignore_filter: bool = True,
+) -> int:
+    """
+    Synchronize packages between local machine and remote targets using rsync.
+
+    At least one of from_target/to_target must be set. The omitted one defaults
+    to the local machine. If force is True, uncommitted changes on the destination
+    are overwritten without checking. Returns 0 on full success, 1 if any package failed.
+    """
+    # Resolve endpoints
+    source_pc: Optional[RemotePC] = None
+    dest_pc: Optional[RemotePC] = None
+    source_ssh: Optional[str] = None
+    dest_ssh: Optional[str] = None
+
+    try:
+        if from_target is not None:
+            source_pc = _resolve_target(from_target)
+            source_ssh = _build_ssh_command(source_pc)
+        if to_target is not None:
+            dest_pc = _resolve_target(to_target)
+            dest_ssh = _build_ssh_command(dest_pc)
+    except ValueError as e:
+        print_error(str(e))
+        return 1
+
+    if source_pc is not None and dest_pc is not None:
+        print_error(
+            "Remote-to-remote sync is not supported. One side must be the local machine."
+        )
+        return 1
+
+    # Resolve workspace roots
+    local_workspace = workspace_root
+
+    if source_ssh is not None:
+        print_info(f"Resolving workspace on source ({from_target})...")
+        source_workspace = _get_workspace_on_remote(source_ssh)
+        if source_workspace is None:
+            print_error("Could not determine workspace root on source.")
+            return 1
+    else:
+        source_workspace = local_workspace
+
+    if dest_ssh is not None:
+        print_info(f"Resolving workspace on destination ({to_target})...")
+        dest_workspace = _get_workspace_on_remote(dest_ssh)
+        if dest_workspace is None:
+            print_error("Could not determine workspace root on destination.")
+            return 1
+    else:
+        dest_workspace = local_workspace
+
+    # Deduplicate packages while preserving order
+    packages = list(dict.fromkeys(packages))
+
+    failed: List[str] = []
+    succeeded: List[str] = []
+
+    for package in packages:
+        print_header(f"Syncing: {package}")
+
+        # Resolve source package path
+        if source_ssh is not None:
+            source_pkg_path = _get_package_path_on_remote(source_ssh, package)
+        else:
+            result = get_package_path(package, source_workspace)
+            source_pkg_path = Path(result) if result else None
+
+        if source_pkg_path is None:
+            print_error(f"Package '{package}' not found on source.")
+            failed.append(package)
             continue
 
-        # get remote package path
-        remote_package_path = _get_package_path_on_remote(ssh_command, packages[0])
+        # Resolve destination package path
+        if dest_ssh is not None:
+            dest_pkg_path = _get_package_path_on_remote(dest_ssh, package)
+        else:
+            result = get_package_path(package, dest_workspace)
+            dest_pkg_path = Path(result) if result else None
 
-        if remote_package_path is None:
-            continue
+        if dest_pkg_path is None:
+            # Package does not exist on destination — derive path from source
+            source_src = Path(source_workspace) / "src"
+            try:
+                source_rel = source_pkg_path.relative_to(source_src)
+            except ValueError:
+                print_error(
+                    f"Package '{package}' is not inside src/ on the source. Cannot derive destination path."
+                )
+                failed.append(package)
+                continue
 
-        # check if package is inside the workspace on remote
-        remote_ws_path = Path(target_workspace).resolve()
-        if not remote_package_path.is_relative_to(remote_ws_path / "src"):
-            print_error(f"Remote package path '{remote_package_path}' is not inside the remote workspace '{remote_ws_path}/src'.")
-            continue
+            dest_pkg_path = Path(dest_workspace) / "src" / source_rel
+            print_warn(
+                f"Package '{package}' does not exist on destination. "
+                f"It will be created at: {dest_pkg_path}"
+            )
+            if not dry_run and not confirm(f"Create '{package}' on destination?"):
+                print_info(f"Skipping {package}.")
+                failed.append(package)
+                continue
+        else:
+            # Package exists on destination — check for uncommitted changes
+            if not force:
+                if dest_ssh is not None:
+                    has_changes = _check_uncommitted_changes_on_remote(
+                        dest_ssh, str(dest_pkg_path)
+                    )
+                else:
+                    has_changes = _check_uncommitted_changes_locally(str(dest_pkg_path))
 
-        # get current branch on remote
-        remote_branch = _get_current_branch_on_remote(ssh_command, remote_package_path)
-        if remote_branch is None:
-            continue
+                if has_changes is None:
+                    print_error(
+                        f"Could not check git status for '{package}' on destination. Skipping."
+                    )
+                    failed.append(package)
+                    continue
 
-        # switch to correct branch locally
-        repo = Repo(repo_root)
+                if has_changes:
+                    print_error(
+                        f"Package '{package}' has uncommitted changes on the destination. "
+                        f"Please commit or stash your changes before syncing, or use --force to overwrite."
+                    )
+                    failed.append(package)
+                    continue
+
+        # Build and run rsync
         try:
-            if repo.head.is_detached or repo.active_branch.name != remote_branch:
-                print_info(f"Switching local repo '{repo_rel}' to branch '{remote_branch}'")
-                repo.git.checkout(remote_branch)
-        except Exception as e:
-            print_error(f"Failed to switch branch in local repo '{repo_rel}': {e}")
+            rsync_cmd = _build_rsync_command(
+                source_path=str(source_pkg_path),
+                dest_path=str(dest_pkg_path),
+                source_pc=source_pc,
+                dest_pc=dest_pc,
+                dry_run=dry_run,
+                use_gitignore_filter=use_gitignore_filter,
+            )
+        except ValueError as e:
+            print_error(str(e))
+            failed.append(package)
             continue
 
-        # get remote repo root
-        remote_repo_root = _get_repo_root_on_remote(ssh_command, remote_package_path)
-        if remote_repo_root is None:
-            continue
-
-        ## perform rsync from remote to local
-        #remote_path = str(remote_repo_root) + "/"
-        #local_path = str(repo_root) + "/"
-        #print_info(f"Synchronizing repository '{repo_rel}' from remote...")
-        #rsync_command = f"rsync -a --delete --exclude '.git' -e 'ssh -p {port}' {remote_name}:{remote_path} {local_path}"
-        #try:
-        #    subprocess.run(shlex.split(rsync_command), check=True)
-        #    print_info(f"Synchronization of '{repo_rel}' completed successfully.")
-        #except subprocess.CalledProcessError as e:
-        #    print_error(f"Synchronization of '{repo_rel}' failed: {e}")
-        #    continue
-
-        # create git diff on remote and check if there are changes
-        if _create_git_diff_on_remote(ssh_command, str(remote_repo_root)):
-            continue
-
-        # get git diff file from remote
-        remote_diff_path = str(remote_repo_root / "changes.diff")
-        local_diff_path = str(workspace_root / "temp_changes.diff")
-        print_info(f"Retrieving changes diff from remote for repository '{repo_rel}'...")
-        scp_command = f"scp -P {port} {remote_name}:{remote_diff_path} {local_diff_path}"
+        print_info(f"Running: {' '.join(rsync_cmd)}")
         try:
-            subprocess.run(shlex.split(scp_command), check=True)
-            print_info(f"Retrieval of changes diff for '{repo_rel}' completed successfully.")
+            subprocess.run(rsync_cmd, check=True)
+            if dry_run:
+                print_info(f"[DRY RUN] Would sync '{package}'.")
+            else:
+                print_success(f"Successfully synced '{package}'.")
+            succeeded.append(package)
         except subprocess.CalledProcessError as e:
-            print_error(f"Retrieval of changes diff for '{repo_rel}' failed: {e}")
-            _delete_git_diff_on_remote(ssh_command, str(remote_repo_root))
-            continue
+            print_error(f"rsync failed for '{package}': {e}")
+            failed.append(package)
 
-        # apply git diff locally
-        print_info(f"Applying changes diff to local repository '{repo_rel}'...")
-        try:
-            with open(local_diff_path, 'r') as diff_file:
-                subprocess.run(['git', '-C', str(repo_root), 'apply'], stdin=diff_file, check=True)
-            print_info(f"Applied changes diff to '{repo_rel}' successfully.")
-            os.remove(local_diff_path)
-        except subprocess.CalledProcessError as e:
-            print_error(f"Applying changes diff to '{repo_rel}' failed: {e}")
-            _delete_git_diff_on_remote(ssh_command, str(remote_repo_root))
-            os.remove(local_diff_path)
-            continue
+    # Summary
+    print("")
+    if succeeded:
+        action = "would be synced" if dry_run else "synced"
+        print_success(f"Packages {action}: {', '.join(succeeded)}")
+    if failed:
+        print_error(f"Packages failed: {', '.join(failed)}")
 
-        # delete git diff on remote
-        _delete_git_diff_on_remote(ssh_command, str(remote_repo_root))
-
-
-    return 0
+    return 1 if failed else 0
