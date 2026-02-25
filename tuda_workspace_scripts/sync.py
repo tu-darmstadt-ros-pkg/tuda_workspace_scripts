@@ -79,8 +79,14 @@ def _run_ssh_command(
             text=True,
         )
     except subprocess.CalledProcessError as e:
-        print_error(f"SSH command failed: {e.stderr.strip()}")
-        return None
+        stderr = (e.stderr or "").strip()
+        if not stderr:
+            stderr = "(no stderr output)"
+        command_str = " ".join(shlex.quote(part) for part in full_command)
+        print_error(
+            f"SSH command failed with return code {e.returncode}: {command_str}\n"
+            f"stderr: {stderr}"
+        )
 
 
 def _get_workspace_on_remote(ssh_command: str) -> Optional[str]:
@@ -94,7 +100,11 @@ def _get_workspace_on_remote(ssh_command: str) -> Optional[str]:
     if not output_lines:
         return None
     remote_ws = output_lines[-1].strip()
-    if "/" not in remote_ws:
+    # Basic sanity check for a valid path
+    if not remote_ws or not remote_ws.startswith("/"):
+        print_error(
+            f"Failed to detect a valid workspace root on remote host. Got: {remote_ws!r}"
+        )
         return None
     return remote_ws
 
@@ -124,7 +134,7 @@ echo "PKG_PATH:$PKG_PATH"
 if [ -n "$PKG_PATH" ] && [ -d "$PKG_PATH" ]; then
     BRANCH=$(cd "$PKG_PATH" && git rev-parse --abbrev-ref HEAD 2>/dev/null)
     echo "BRANCH:$BRANCH"
-    STATUS=$(cd "$PKG_PATH" && git status --porcelain -- "$PKG_PATH" 2>/dev/null)
+    STATUS=$(cd "$PKG_PATH" && git status --porcelain -u -- "$PKG_PATH" 2>/dev/null)
     echo "STATUS_BEGIN"
     [ -n "$STATUS" ] && echo "$STATUS"
     echo "STATUS_END"
@@ -208,7 +218,16 @@ def _batch_query_local(
                 pass
             try:
                 result = subprocess.run(
-                    ["git", "-C", path_str, "status", "--porcelain", "--", path_str],
+                    [
+                        "git",
+                        "-C",
+                        path_str,
+                        "status",
+                        "--porcelain",
+                        "-u",
+                        "--",
+                        path_str,
+                    ],
                     check=True,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -369,19 +388,21 @@ def sync(
             failed.append(package)
             continue
 
+        # Check if source package is inside the workspace src/ directory
+        source_src = Path(source_workspace) / "src"
+        try:
+            source_rel = src.path.relative_to(source_src)
+        except ValueError:
+            print_error(
+                f"Package '{package}' on the source is not a source checkout "
+                f"(found at {src.path}). Only packages inside the workspace "
+                f"src/ directory can be synced."
+            )
+            failed.append(package)
+            continue
+
         if dst.path is None:
             # Package does not exist on destination — derive path from source
-            source_src = Path(source_workspace) / "src"
-            try:
-                source_rel = src.path.relative_to(source_src)
-            except ValueError:
-                print_error(
-                    f"Package '{package}' is not inside src/ on the source. "
-                    f"Cannot derive destination path."
-                )
-                failed.append(package)
-                continue
-
             dest_pkg_path = Path(dest_workspace) / "src" / source_rel
             print_warn(
                 f"Package '{package}' does not exist on destination. "
@@ -392,7 +413,29 @@ def sync(
                 skipped.append(package)
                 continue
         else:
-            dest_pkg_path = dst.path
+            # Check if destination package is inside the workspace src/ directory
+            dest_src = Path(dest_workspace) / "src"
+            try:
+                dst.path.relative_to(dest_src)
+            except ValueError:
+                print_warn(
+                    f"Package '{package}' is only installed on the destination "
+                    f"(found at {dst.path}), not a source checkout. "
+                    f"Consider cloning the repository first."
+                )
+                dest_pkg_path = Path(dest_workspace) / "src" / source_rel
+                print_warn(
+                    f"The package will be synced to: {dest_pkg_path} "
+                    f"(outside of any git repository)"
+                )
+                if not dry_run and not confirm(
+                    f"Continue syncing '{package}' without a repository?"
+                ):
+                    print_info(f"Skipping {package}.")
+                    skipped.append(package)
+                    continue
+            else:
+                dest_pkg_path = dst.path
 
             # Check if source and destination are on the same branch
             if src.branch and dst.branch and src.branch != dst.branch:
@@ -401,7 +444,7 @@ def sync(
                     f"destination is on '{dst.branch}'. "
                     f"This may transfer more files than necessary."
                 )
-                if not confirm(f"Continue syncing '{package}'?"):
+                if not dry_run and not confirm(f"Continue syncing '{package}'?"):
                     print_info(f"Skipping {package}.")
                     skipped.append(package)
                     continue
@@ -416,11 +459,13 @@ def sync(
 
             if dst.dirty:
                 print_warn(
-                    f"Package '{package}' has uncommitted changes on the destination:"
+                    f"Package '{package}' has uncommitted changes or untracked files on the destination:"
                 )
                 _print_changed_files(dst.changed_files)
 
-                if not confirm(f"Overwrite changes in '{package}' on destination?"):
+                if not dry_run and not confirm(
+                    f"Overwrite changes in '{package}' on destination?"
+                ):
                     print_info(f"Skipping {package}.")
                     skipped.append(package)
                     continue
@@ -437,14 +482,18 @@ def sync(
 
         print_info(f"Running: {' '.join(rsync_cmd)}")
         try:
-            subprocess.run(rsync_cmd, check=True)
+            subprocess.run(rsync_cmd, check=True, stderr=subprocess.PIPE, text=True)
             if dry_run:
                 print_info(f"[DRY RUN] Would sync '{package}'.")
             else:
                 print_success(f"Successfully synced '{package}'.")
             succeeded.append(package)
         except subprocess.CalledProcessError as e:
-            print_error(f"rsync failed for '{package}': {e}")
+            stderr = (e.stderr or "").strip()
+            if stderr:
+                print_error(f"rsync failed for '{package}':\n{stderr}")
+            else:
+                print_error(f"rsync failed for '{package}' (exit code {e.returncode})")
             failed.append(package)
 
     # Summary
