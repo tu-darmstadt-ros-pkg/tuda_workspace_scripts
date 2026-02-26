@@ -9,6 +9,7 @@ from ssh import RemotePCChoicesCompleter
 from tuda_workspace_scripts import get_workspace_root
 from tuda_workspace_scripts.workspace import (
     PackageChoicesCompleter,
+    PackagePathCompleter,
     find_package_containing,
     find_packages_in_directory,
 )
@@ -49,6 +50,14 @@ if __name__ == "__main__":
         help="Destination target (robot PC name from robots.yaml). Defaults to local machine if omitted.",
     )
     to_arg.completer = RemotePCChoicesCompleter()
+
+    path_arg = parser.add_argument(
+        "--path",
+        default=None,
+        help="Sync only a specific file or folder within a package, "
+        "given as a relative path from the package root (e.g. 'src/module.py' or 'config/').",
+    )
+    path_arg.completer = PackagePathCompleter(workspace_root)
 
     parser.add_argument(
         "--dry-run",
@@ -91,6 +100,10 @@ if __name__ == "__main__":
         print_error("No packages specified. Use package names or --this.")
         exit(1)
 
+    if args.path is not None and len(packages) != 1:
+        print_error("--path can only be used with a single package.")
+        exit(1)
+
     exit(
         sync(
             workspace_root=workspace_root,
@@ -99,5 +112,6 @@ if __name__ == "__main__":
             to_target=args.to_target,
             dry_run=args.dry_run,
             use_gitignore_filter=not args.no_gitignore_filter,
+            subpath=args.path,
         )
     )

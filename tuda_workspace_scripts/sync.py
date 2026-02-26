@@ -256,25 +256,27 @@ def _build_rsync_command(
     dest_pc: Optional[RemotePC],
     dry_run: bool,
     use_gitignore_filter: bool,
+    is_directory: bool = True,
 ) -> List[str]:
     """
-    Build an rsync command for syncing a package directory.
+    Build an rsync command for syncing a package directory or a single file.
 
     Exactly one of source_pc/dest_pc may be non-None (local-to-remote or remote-to-local).
-    Both None means local-to-local.
+    Both None means local-to-local. When is_directory is False, trailing slashes
+    and --delete are omitted (single file sync).
     """
     # Order matters: rsync processes rules first-match-wins,
     # so --include=.gitignore must come before --exclude=.*
     cmd = [
         "rsync",
         "-avz",
-        "--delete",
-        "--include=.gitignore",
-        "--exclude=.*",
     ]
 
-    if use_gitignore_filter:
-        cmd.append("--filter=:- .gitignore")
+    if is_directory:
+        cmd.extend(["--delete", "--include=.gitignore", "--exclude=.*"])
+
+        if use_gitignore_filter:
+            cmd.append("--filter=:- .gitignore")
 
     if dry_run:
         cmd.append("--dry-run")
@@ -283,15 +285,17 @@ def _build_rsync_command(
     if remote_pc is not None:
         cmd.extend(["-e", f"ssh -p {remote_pc.port}"])
 
+    trail = "/" if is_directory else ""
+
     if source_pc is not None:
-        rsync_source = f"{source_pc.user}@{source_pc.hostname}:{source_path}/"
+        rsync_source = f"{source_pc.user}@{source_pc.hostname}:{source_path}{trail}"
     else:
-        rsync_source = f"{source_path}/"
+        rsync_source = f"{source_path}{trail}"
 
     if dest_pc is not None:
-        rsync_dest = f"{dest_pc.user}@{dest_pc.hostname}:{dest_path}/"
+        rsync_dest = f"{dest_pc.user}@{dest_pc.hostname}:{dest_path}{trail}"
     else:
-        rsync_dest = f"{dest_path}/"
+        rsync_dest = f"{dest_path}{trail}"
 
     cmd.append(rsync_source)
     cmd.append(rsync_dest)
@@ -305,12 +309,14 @@ def sync(
     to_target: Optional[str],
     dry_run: bool = False,
     use_gitignore_filter: bool = True,
+    subpath: Optional[str] = None,
 ) -> int:
     """
     Synchronize packages between local machine and remote targets using rsync.
 
     At least one of from_target/to_target must be set. The omitted one defaults
-    to the local machine. Returns 0 on full success, 1 if any package failed.
+    to the local machine. If subpath is given, only that file or folder within
+    each package is synced. Returns 0 on full success, 1 if any package failed.
     """
     # Resolve endpoints
     source_pc: Optional[RemotePC] = None
@@ -470,14 +476,29 @@ def sync(
                     skipped.append(package)
                     continue
 
+        # Narrow to subpath if specified
+        sync_source = src.path
+        sync_dest = dest_pkg_path
+        is_directory = True
+        if subpath is not None:
+            sync_source = src.path / subpath
+            sync_dest = dest_pkg_path / subpath
+            # Determine if the subpath is a file or directory.
+            # Check on whichever side is local.
+            if source_pc is None:
+                is_directory = sync_source.is_dir()
+            elif dest_pc is None:
+                is_directory = sync_dest.is_dir()
+
         # Build and run rsync
         rsync_cmd = _build_rsync_command(
-            source_path=str(src.path),
-            dest_path=str(dest_pkg_path),
+            source_path=str(sync_source),
+            dest_path=str(sync_dest),
             source_pc=source_pc,
             dest_pc=dest_pc,
             dry_run=dry_run,
             use_gitignore_filter=use_gitignore_filter,
+            is_directory=is_directory,
         )
 
         print_info(f"Running: {' '.join(rsync_cmd)}")
