@@ -1,0 +1,24 @@
+{
+  mode: "router",
+  listen: {
+    endpoints: ["tcp/0.0.0.0:7448"]
+  },
+  connect: {
+    endpoints: [
+      {%- for endpoint in endpoints %}
+      "{{ endpoint }}"{{ "," if not loop.last else "" }}
+      {%- endfor %}
+    ]
+  },
+  // Add this section to disable multicast scouting
+  scouting: {
+    multicast: {
+      enabled: false
+    }
+  },
+  plugins: {
+    ros2dds: {
+      domain: 0
+    }
+  }
+}
