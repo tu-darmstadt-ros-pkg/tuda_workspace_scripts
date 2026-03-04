@@ -142,12 +142,15 @@ def create_zenoh_bridge_config_json5(
                 print_warn(
                     f"Existing Zenoh bridge config found at {ZENOH_BRIDGE_CONFIG_URI}. Backing up as {ZENOH_BRIDGE_CONFIG_URI}.backup{i}."
                 )
-                os.rename(ZENOH_BRIDGE_CONFIG_URI, f"{ZENOH_BRIDGE_CONFIG_URI}.backup{i}")
+                os.rename(
+                    ZENOH_BRIDGE_CONFIG_URI, f"{ZENOH_BRIDGE_CONFIG_URI}.backup{i}"
+                )
 
     with open(ZENOH_BRIDGE_CONFIG_URI, "w", encoding="utf-8") as file:
         file.write(f"{JSON5_MARKER}\n")
         file.write(config)
     print_info(f"Zenoh bridge config updated.")
+
 
 def create_zenoh_router_config_yaml(
     selected_robots: list[str],
@@ -208,7 +211,6 @@ def create_zenoh_router_config_yaml(
         file.write(f"{YAML_MARKER}\n")
         yaml.dump(config, file, default_flow_style=False)
     print_info(f"Zenoh router config updated.")
-
 
 
 def _create_cyclonedds_config_xml(peers: list[str]) -> str:
