@@ -31,14 +31,64 @@ def create_discovery_config(selected_robots: list[str], custom_addresses: list[s
         create_zenoh_router_config_yaml(
             selected_robots, available_robots, custom_addresses
         )
-    elif RMW == "rmw_cyclonedds_cpp":
+    elif RMW == "rmw_cyclonedds_cpp" and ZENOH_BRIDGE_CONFIG_URI:
         create_zenoh_bridge_config_json5(
+            selected_robots, available_robots, custom_addresses
+        )
+    elif RMW == "rmw_cyclonedds_cpp":
+        create_cyclonedds_config_xml(
             selected_robots, available_robots, custom_addresses
         )
     elif RMW:
         raise NotImplementedError(f"Discovery is not implemented for RMW {RMW}")
     else:
         raise RuntimeError("RMW_IMPLEMENTATION is not set.")
+
+
+def create_cyclonedds_config_xml(
+    selected_robots: list[str],
+    available_robots: dict[str, Robot],
+    custom_addresses: list[str],
+):
+    peers = []
+
+    for name in selected_robots:
+        if name == "off":
+            break
+        elif name == "all":
+            for _, robot_data in available_robots.items():
+                peers.extend(robot_data.cyclonedds_address)
+            break
+        elif name in available_robots:
+            peers.extend(available_robots[name].cyclonedds_address)
+        else:
+            print_warn(
+                f"Couldn't find an entry for {name} in robot configs. Please check if your selected robot is available."
+            )
+
+    peers.extend(custom_addresses)
+
+    config = _create_cyclonedds_config_xml(peers)
+    print("CycloneDDS peers:")
+    for peer in peers:
+        print(" -", peer)
+
+    if os.path.isfile(CYCLONEDDS_URI):
+        # Backup existing files if not ours
+        with open(CYCLONEDDS_URI, "r") as file:
+            if file.readline().strip() != XML_MARKER:
+                i = 0
+                while os.path.isfile(CYCLONEDDS_URI + f".backup{i}"):
+                    i += 1
+                print_warn(
+                    f"Existing CycloneDDS config found at {CYCLONEDDS_URI}. Backing up as {CYCLONEDDS_URI}.backup{i}."
+                )
+                os.rename(CYCLONEDDS_URI, f"{CYCLONEDDS_URI}.backup{i}")
+
+    with open(CYCLONEDDS_URI, "w", encoding="utf-8") as file:
+        file.write(f"{XML_MARKER}\n")
+        file.write(config)
+    print_info(f"CycloneDDS config updated.")
 
 
 def create_zenoh_bridge_config_json5(
@@ -161,6 +211,15 @@ def create_zenoh_router_config_yaml(
 
 
 
+def _create_cyclonedds_config_xml(peers: list[str]) -> str:
+    template_dir = os.path.join(
+        get_package_share_directory("tuda_workspace_scripts"), "templates"
+    )
+    env = Environment(loader=FileSystemLoader(template_dir))
+    template = env.get_template("cyclonedds_config.xml.j2")
+    return template.render(peers=peers)
+
+
 def _create_zenoh_bridge_config_json5(endpoints: list[str]) -> str:
     # Get the template directory path from the share directory
     template_dir = os.path.join(
@@ -174,24 +233,44 @@ def _create_zenoh_bridge_config_json5(endpoints: list[str]) -> str:
 
 
 def print_discovery_config():
-    print_info(f"RMW Implementation: {RMW}")
+    if ZENOH_BRIDGE_CONFIG_URI:
+        print_info(f"RMW Implementation: {RMW} + Zenoh bridge")
+    else:
+        print_info(f"RMW Implementation: {RMW}")
     if RMW == "rmw_zenoh_cpp":
         print_zenoh_discovery_config()
-    elif RMW == "rmw_cyclonedds_cpp":
+    elif RMW == "rmw_cyclonedds_cpp" and ZENOH_BRIDGE_CONFIG_URI:
         print_zenoh_bridge_discovery_config()
+    elif RMW == "rmw_cyclonedds_cpp":
+        print_cyclonedds_discovery_config()
     elif RMW:
         raise NotImplementedError(f"Discovery is not implemented for RMW {RMW}")
     else:
         raise RuntimeError("RMW_IMPLEMENTATION is not set.")
 
 
+def print_cyclonedds_discovery_config():
+    if os.path.exists(CYCLONEDDS_URI):
+        print_info(f"Configuration file: {CYCLONEDDS_URI}")
+        with open(CYCLONEDDS_URI, "r") as file:
+            print(file.read())
+    else:
+        print_warn(f"Configuration file not found: {CYCLONEDDS_URI}")
+
+
 def print_zenoh_bridge_discovery_config():
     if os.path.exists(ZENOH_BRIDGE_CONFIG_URI):
-        print_info(f"Configuration file: {ZENOH_BRIDGE_CONFIG_URI}")
+        print_info(f"Zenoh Bridge Configuration file: {ZENOH_BRIDGE_CONFIG_URI}")
         with open(ZENOH_BRIDGE_CONFIG_URI, "r") as file:
             print(file.read())
     else:
         print_warn(f"Configuration file not found: {ZENOH_BRIDGE_CONFIG_URI}")
+    if os.path.exists(CYCLONEDDS_URI):
+        print_info(f"CycloneDDS Configuration file: {CYCLONEDDS_URI}")
+        with open(CYCLONEDDS_URI, "r") as file:
+            print(file.read())
+    else:
+        print_warn(f"Configuration file not found: {CYCLONEDDS_URI}")
 
 
 def print_zenoh_discovery_config():
