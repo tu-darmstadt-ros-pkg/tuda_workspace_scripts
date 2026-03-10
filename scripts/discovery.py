@@ -122,11 +122,14 @@ Examples: hostname 10.0.10.3
                     f"Hook {hook} does not contain a valid on_discovery_updated method."
                 )
                 continue
-            on_discovery_updated(selected_robots=selected_robots)
+            on_discovery_updated(
+                selected_robots=selected_robots, custom_addresses=custom_addresses
+            )
         elif hook.endswith(".bash") or hook.endswith(".sh"):
             executable = "bash" if hook.endswith(".bash") else "sh"
             subprocess.run(
-                [executable, hook] + selected_robots, cwd=get_workspace_root()
+                [executable, hook] + selected_robots + custom_addresses,
+                cwd=get_workspace_root(),
             )
 
     print_info("Discovery configuration updated.")
