@@ -1,6 +1,8 @@
 from ament_index_python.packages import get_package_share_directory
 import re
 import os
+import json
+import json5
 import yaml
 from jinja2 import Environment, FileSystemLoader
 from .print import print_info, print_warn
@@ -33,6 +35,45 @@ def create_discovery_config(selected_robots: list[str], custom_addresses: list[s
         )
     elif RMW:
         raise NotImplementedError(f"Discovery is not implemented for RMW {RMW}")
+    else:
+        raise RuntimeError("RMW_IMPLEMENTATION is not set.")
+
+
+def update_discovery_config(selected_robots: list[str], custom_addresses: list[str]):
+    available_robots = load_robots()
+
+    if RMW == "rmw_zenoh_cpp":
+        update_zenoh_router_config(selected_robots, available_robots, custom_addresses)
+    elif RMW == "rmw_cyclonedds_cpp":
+        print_warn(
+            "Updating Cyclone DDS config is not supported. Overwriting the config file instead."
+        )
+        create_cyclonedds_router_config_xml(
+            selected_robots, available_robots, custom_addresses
+        )
+    elif RMW:
+        raise NotImplementedError(f"Discovery is not implemented for RMW {RMW}")
+    else:
+        raise RuntimeError("RMW_IMPLEMENTATION is not set.")
+
+
+def get_connected_robots() -> list[str]:
+    available_robots = load_robots()
+    if RMW == "rmw_zenoh_cpp":
+        routers = get_zenoh_routers_from_config_file(ZENOH_ROUTER_CONFIG_PATH)
+        connected_robots = []
+        for router in routers:
+            for robot_name, robot_data in available_robots.items():
+                if any(
+                    router.get_zenoh_router_address() == r.get_zenoh_router_address()
+                    for r in robot_data.zenoh_routers
+                ):
+                    connected_robots.append(robot_name)
+        return connected_robots
+    elif RMW:
+        raise NotImplementedError(
+            f"Listing the currently connected robots is not implemented for RMW {RMW}"
+        )
     else:
         raise RuntimeError("RMW_IMPLEMENTATION is not set.")
 
@@ -103,11 +144,11 @@ def create_cyclonedds_router_config_xml(
     print_info(f"Cyclone DDS config updated.")
 
 
-def create_zenoh_router_config_yaml(
+def _create_zenoh_router_list(
     selected_robots: list[str],
     available_robots: dict[str, Robot],
     custom_addresses: list[str],
-):
+) -> list[ZenohRouter]:
     routers = []
 
     for name in selected_robots:
@@ -125,24 +166,41 @@ def create_zenoh_router_config_yaml(
             )
 
     for address in custom_addresses:
-        match = re.match(r"([^:/]+)(:\d+)?(/.*)?$", address)
-        if not match:
-            print_warn(
-                f"Invalid address '{address}'! Please use the format 'IP_OR_HOSTNAME[:PORT][/PROTOCOL]'."
-            )
-            continue
-        name = match.group(1)
-        tmp = match.group(2)
-        port = int(tmp[1:]) if tmp and tmp[0] == ":" else 7447
-        tmp = match.group(3)
-        protocol = tmp[1:] if tmp and tmp[0] == "/" else "tcp"
+        routers.append(ZenohRouter.from_string(address))
 
-        routers.append(ZenohRouter(name, port, protocol))
+    return routers
+
+
+def get_zenoh_routers_from_config_file(config_path: str) -> list[ZenohRouter]:
+    if config_path.endswith((".yaml", ".yml")):
+        with open(config_path, "r") as file:
+            config = yaml.safe_load(file)
+        routers = []
+        for endpoint in config.get("connect", {}).get("endpoints", []):
+            routers.append(ZenohRouter.from_string(endpoint))
+        return routers
+    elif config_path.endswith((".json", ".json5")):
+        with open(config_path, "r") as file:
+            config = json5.load(file)
+        routers = []
+        for endpoint in config.get("connect", {}).get("endpoints", []):
+            routers.append(ZenohRouter.from_string(endpoint))
+        return routers
+    raise ValueError(
+        f"Unsupported config file format: {config_path}. Supported formats are .yaml, .yml, .json, and .json5."
+    )
+
+
+def create_zenoh_router_config_yaml(
+    selected_robots: list[str],
+    available_robots: dict[str, Robot],
+    custom_addresses: list[str],
+):
+    routers = _create_zenoh_router_list(
+        selected_robots, available_robots, custom_addresses
+    )
 
     config = _create_zenoh_router_config_yaml(routers)
-    print("Connecting to routers:")
-    for router in config["connect"]["endpoints"]:
-        print(" -", router)
 
     if os.path.isfile(ZENOH_ROUTER_CONFIG_PATH):
         # Backup existing files if not ours
@@ -162,6 +220,58 @@ def create_zenoh_router_config_yaml(
         file.write(f"{YAML_MARKER}\n")
         yaml.dump(config, file, default_flow_style=False)
     print_info(f"Zenoh router config updated.")
+
+
+def update_zenoh_router_config(
+    selected_robots: list[str],
+    available_robots: dict[str, Robot],
+    custom_addresses: list[str],
+):
+    if not ZENOH_ROUTER_CONFIG_PATH:
+        print_warn("ZENOH_ROUTER_CONFIG_URI is not set. Cannot update config file.")
+        return
+    if not ZENOH_ROUTER_CONFIG_PATH.endswith((".yaml", ".yml", ".json", ".json5")):
+        print_warn(
+            f"Unsupported config file format: {ZENOH_ROUTER_CONFIG_PATH}. Supported formats are .yaml, .yml, .json, and .json5. Cannot update config file."
+        )
+        return
+    routers = _create_zenoh_router_list(
+        selected_robots, available_robots, custom_addresses
+    )
+
+    config = {
+        "mode": "router",
+        "connect": {"endpoints": []},
+    }
+    if not os.path.isfile(ZENOH_ROUTER_CONFIG_PATH):
+        print_warn(
+            f"Zenoh router config file not found at {ZENOH_ROUTER_CONFIG_PATH}. Creating new config file."
+        )
+    if ZENOH_ROUTER_CONFIG_PATH.endswith((".yaml", ".yml")):
+        if os.path.isfile(ZENOH_ROUTER_CONFIG_PATH):
+            with open(ZENOH_ROUTER_CONFIG_PATH, "r") as file:
+                config = yaml.safe_load(file)
+        if not config["connect"]:
+            config["connect"] = {}
+        config["connect"]["endpoints"] = [
+            router.get_zenoh_router_address() for router in routers
+        ]
+        with open(ZENOH_ROUTER_CONFIG_PATH, "w") as file:
+            yaml.dump(config, file, default_flow_style=False)
+    elif ZENOH_ROUTER_CONFIG_PATH.endswith((".json", ".json5")):
+        if os.path.isfile(ZENOH_ROUTER_CONFIG_PATH):
+            with open(ZENOH_ROUTER_CONFIG_PATH, "r") as file:
+                config = json5.load(file)
+        if not config["connect"]:
+            config["connect"] = {}
+        config["connect"]["endpoints"] = [
+            router.get_zenoh_router_address() for router in routers
+        ]
+        with open(ZENOH_ROUTER_CONFIG_PATH, "w") as file:
+            if ZENOH_ROUTER_CONFIG_PATH.endswith(".json5"):
+                json5.dump(config, file, indent=2)
+            else:
+                json.dump(config, file, indent=2)
 
 
 def _create_cyclonedds_config_xml(peers: list[str]) -> str:

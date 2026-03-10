@@ -13,6 +13,7 @@
   <depend>ament_index_python</depend>
   <depend>python3-git</depend>
   <depend>python3-jinja2</depend>
+  <depend>python3-json5</depend>
   <depend>python3-libtmux</depend>
   <depend>python3-yaml</depend>
   <test_depend>ament_lint_auto</test_depend>

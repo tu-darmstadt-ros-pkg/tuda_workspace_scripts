@@ -92,18 +92,25 @@ Examples: hostname 10.0.10.3
     selected_robots = args.robots
     custom_addresses = args.address or []
 
-    # Validation logic
     if not selected_robots and not custom_addresses:
-        parser.error("You must specify either 'robots' or '--address'.")
+        # No argument provided, print current endpoints
+        robots = get_connected_robots()
+        if not robots:
+            print("No endpoints connected.")
+            return
+        print("Connected endpoints:")
+        for robot in robots:
+            print(f" - {robot}")
+        return
 
+    # Validation logic
     if "off" in selected_robots and len(selected_robots) > 1:
         parser.error("'off' cannot be combined with other robots.")
 
-    # Disallow "all" with any other options
     if "all" in selected_robots and len(selected_robots) > 1:
         parser.error("'all' cannot be combined with other robots.")
 
-    create_discovery_config(selected_robots, custom_addresses)
+    update_discovery_config(selected_robots, custom_addresses)
 
     # Get hooks and sort them by their filename
     hooks = list(sorted(get_hooks_for_command("discovery"), key=basename))
@@ -121,6 +128,15 @@ Examples: hostname 10.0.10.3
             subprocess.run(
                 [executable, hook] + selected_robots, cwd=get_workspace_root()
             )
+
+    print_info("Discovery configuration updated.")
+    print_header("Connected endpoints:")
+    robots = get_connected_robots()
+    if not robots:
+        print("No endpoints connected.")
+        return
+    for robot in robots:
+        print(f" - {robot}")
 
 
 if __name__ == "__main__":
