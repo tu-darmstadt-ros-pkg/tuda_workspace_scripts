@@ -1,6 +1,7 @@
 from .workspace import get_workspace_root
 import os
 from jinja2 import Template
+import re
 from typing import Any, Generator
 import yaml
 
@@ -85,6 +86,21 @@ class ZenohRouter:
 
     def get_zenoh_router_address(self):
         return f"{self.protocol}/{self.address}:{self.port}"
+
+    @staticmethod
+    def from_string(addr: str):
+        """
+        Creates a ZenohRouter objects from the text representation "protocol/address:port"
+        Example: "tcp/192.168.1.100:7447" or "quic/athena-main:7447"
+        """
+        pattern = r"^(?P<protocol>\w+)\/(?P<address>[\w\.\-]+):(?P<port>\d+)$"
+        match = re.match(pattern, addr)
+        if not match:
+            raise ValueError(f"Invalid Zenoh router address format: {addr}")
+        protocol = match.group("protocol")
+        address = match.group("address")
+        port = int(match.group("port"))
+        return ZenohRouter(address, port, protocol)
 
 
 class Robot:
