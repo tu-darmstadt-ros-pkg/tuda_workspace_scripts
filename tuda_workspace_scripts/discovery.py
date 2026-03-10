@@ -2,6 +2,7 @@ from ament_index_python.packages import get_package_share_directory
 import re
 import os
 import json
+import json5
 import yaml
 from jinja2 import Environment, FileSystemLoader
 from .print import print_info, print_warn
@@ -180,7 +181,7 @@ def get_zenoh_routers_from_config_file(config_path: str) -> list[ZenohRouter]:
         return routers
     elif config_path.endswith((".json", ".json5")):
         with open(config_path, "r") as file:
-            config = json.load(file)
+            config = json5.load(file)
         routers = []
         for endpoint in config.get("connect", {}).get("endpoints", []):
             routers.append(ZenohRouter.from_string(endpoint))
@@ -260,14 +261,17 @@ def update_zenoh_router_config(
     elif ZENOH_ROUTER_CONFIG_PATH.endswith((".json", ".json5")):
         if os.path.isfile(ZENOH_ROUTER_CONFIG_PATH):
             with open(ZENOH_ROUTER_CONFIG_PATH, "r") as file:
-                config = json.load(file)
+                config = json5.load(file)
         if not config["connect"]:
             config["connect"] = {}
         config["connect"]["endpoints"] = [
             router.get_zenoh_router_address() for router in routers
         ]
         with open(ZENOH_ROUTER_CONFIG_PATH, "w") as file:
-            json.dump(config, file)
+            if ZENOH_ROUTER_CONFIG_PATH.endswith(".json5"):
+                json5.dump(config, file, indent=2)
+            else:
+                json.dump(config, file, indent=2)
 
 
 def _create_cyclonedds_config_xml(peers: list[str]) -> str:
