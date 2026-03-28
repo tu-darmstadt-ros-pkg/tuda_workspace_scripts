@@ -11,8 +11,6 @@ Update every git repository under the *src* directory of a ROS 2 workspace.
 from __future__ import annotations
 
 import os
-import signal
-import subprocess
 import time
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -28,7 +26,12 @@ from tuda_workspace_scripts.print import (
     Colors,
     print_workspace_error,
 )
-from tuda_workspace_scripts.workspace import get_workspace_root
+from tuda_workspace_scripts.workspace import get_workspace_root, get_repos_in_workspace
+from tuda_workspace_scripts.git_utils import (
+    launch_subprocess,
+    get_remote_head_mainline,
+    get_deleted_branch_status,
+)
 
 try:
     import git
@@ -40,165 +43,10 @@ except ImportError:
     raise
 
 
-# HELPERS
-def launch_subprocess(cmd: list[str] | tuple[str, ...], cwd: str | Path):
-    """
-    Run *cmd* in *cwd*, forwarding Ctrl-C to the child process group.
-    Sets GIT_TERMINAL_PROMPT=0 to prevent hanging on missing credentials.
-    """
-    # Prevent git from hanging by asking for credentials in a background thread
-    env = os.environ.copy()
-    env["GIT_TERMINAL_PROMPT"] = "0"
-
-    # Use Popen to allow proper cleanup on KeyboardInterrupt
-    try:
-        with subprocess.Popen(
-            cmd,
-            cwd=str(cwd),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,  # Sets the child as a new process group leader
-            env=env,
-        ) as process:
-            try:
-                stdout, stderr = process.communicate()
-            except KeyboardInterrupt:
-                # Forward the interrupt to the entire child process group.
-                # Since start_new_session=True, the PGID is the same as the PID.
-                os.killpg(process.pid, signal.SIGINT)
-
-                # Wait briefly for it to exit, otherwise let the context manager kill it
-                try:
-                    process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                raise
-
-            return subprocess.CompletedProcess(
-                process.args, process.returncode, stdout, stderr
-            )
-    except KeyboardInterrupt:
-        raise
-
-
-def _has_commits_not_on_any_remote(repo: git.Repo, branch_name: str) -> bool:
-    """True iff *branch_name* contains commits unknown to **any** remote."""
-    try:
-        cnt = int(
-            repo.git.rev_list("--count", branch_name, "--not", "--remotes").strip()
-            or "0"
-        )
-        return cnt > 0
-    except git.exc.GitCommandError:
-        return False
-
-
-def _remote_head_mainline_ref(repo: git.Repo, remote_name: str) -> str | None:
-    """
-    Resolve the remote's configured mainline via refs/remotes/<remote>/HEAD.
-    Returns a ref like '<remote>/<branch>' (e.g. 'origin/ros2') or None.
-    """
-    head_ref = f"refs/remotes/{remote_name}/HEAD"
-    try:
-        sym = repo.git.symbolic_ref("-q", head_ref).strip()
-        if not sym:
-            return None
-        prefix = f"refs/remotes/{remote_name}/"
-        if sym.startswith(prefix):
-            return f"{remote_name}/{sym[len(prefix):]}"
-        return None
-    except git.exc.GitCommandError:
-        return None
-
-
-def _is_ancestor(repo: git.Repo, ancestor: str, descendant: str) -> bool:
-    """True iff ancestor is reachable from descendant."""
-    try:
-        repo.git.merge_base("--is-ancestor", ancestor, descendant)
-        return True
-    except git.exc.GitCommandError:
-        # If refs are missing or invalid, fail safe (return False)
-        return False
-
-
-def _is_deleted_branch(repo: git.Repo, branch: git.Head) -> tuple[bool, str | None]:
-    """
-    Returns (deletable, warning)
-
-    * deletable → upstream vanished **and** branch is safe to delete:
-      - not the current branch
-      - no commits unknown to any remote
-      - merged into remote's HEAD mainline (if resolvable)
-    * warning   → explanatory message when *not* deletable (None if none).
-    """
-    tracking = branch.tracking_branch()
-    if tracking is None:
-        return False, None
-
-    try:
-        # tracking.remote_name might fail if config is corrupt, handle safely
-        if not tracking.remote_name:
-            return False, None
-
-        remote = repo.remotes[tracking.remote_name]
-
-        # Check if the tracking ref actually exists in the remote's refs (name-based)
-        remote_ref_names = {r.name for r in remote.refs}
-        if tracking.name in remote_ref_names:
-            return False, None
-
-    except (
-        KeyError,
-        IndexError,
-        ValueError,
-        AttributeError,
-        TypeError,
-    ):
-        # Best-effort detection: if remote config is lost or invalid, assume not deletable.
-        if not repo.head.is_detached and branch.name == repo.head.ref.name:
-            warn = (
-                f"Remote '{tracking.remote_name}' for current branch {branch.name} "
-                "does not exist anymore. Skipping deletion."
-            )
-            return False, warn
-        return False, None
-
-    if not repo.head.is_detached and branch.name == repo.head.ref.name:
-        warn = (
-            f"Current branch {branch.name} was deleted on the remote. "
-            "Skipping deletion."
-        )
-        return False, warn
-
-    if _has_commits_not_on_any_remote(repo, branch.name):
-        warn = (
-            f"Branch {branch.name} was deleted on the remote but still has "
-            "commits that are not present on any remote."
-        )
-        return False, warn
-
-    # only delete if merged into remote HEAD mainline
-    mainline = _remote_head_mainline_ref(repo, tracking.remote_name)
-    if mainline is None:
-        warn = (
-            f"Branch {branch.name} was deleted on the remote but remote "
-            f"'{tracking.remote_name}' HEAD mainline could not be resolved. "
-            "Skipping deletion."
-        )
-        return False, warn
-
-    if not _is_ancestor(repo, branch.name, mainline):
-        warn = (
-            f"Branch {branch.name} was deleted on the remote but is not merged into "
-            f"{mainline}. Skipping deletion."
-        )
-        return False, warn
-
-    return True, None
-
-
 # RESULT CONTAINER
+# Note: RepoResult is distinct from git_utils.RepoStatus:
+# - RepoStatus: Describes the current state of a repo (for status/remove commands)
+# - RepoResult: Captures the outcome of update operations (fetch/pull results, errors)
 class RepoResult:
     __slots__ = (
         "path",
@@ -249,7 +97,9 @@ def process_repo(repo_path: Path) -> RepoResult:
     """Fetch, optional pull, stale-branch detection - runs in a thread."""
     try:
         # 1. Subprocess Fetch (Side effect: updates refs on disk)
-        fetch = launch_subprocess(["git", "fetch", "--all", "--prune"], cwd=repo_path)
+        fetch = launch_subprocess(
+            ["git", "fetch", "--all", "--prune"], cwd=repo_path, timeout=120
+        )
         fetch_ok = fetch.returncode == 0
 
         # 2. Instantiate GitPython Repo object NOW, after fetch,
@@ -333,7 +183,7 @@ def process_repo(repo_path: Path) -> RepoResult:
                             pass
 
             for br in repo.branches:
-                can_del, warn = _is_deleted_branch(repo, br)
+                can_del, warn = get_deleted_branch_status(repo, br)
                 if can_del:
                     deletable.append(br.name)
                 if warn:
@@ -358,21 +208,6 @@ def process_repo(repo_path: Path) -> RepoResult:
         return RepoResult(repo_path, "?", False, False, False, [], [], "", "", str(exc))
 
 
-# DISCOVERY
-def collect_repos(ws_src: Path) -> list[Path]:
-    """Return absolute paths of *top-level* git repos under ws_src."""
-    repos: list[Path] = []
-    for root, dirs, _ in os.walk(ws_src):
-        root_p = Path(root)
-        git_entry = root_p / ".git"
-
-        # Check for directory (standard repo) OR file (submodule/worktree)
-        if git_entry.is_dir() or git_entry.is_file():
-            repos.append(root_p)
-            dirs[:] = []  # don’t recurse into repo
-    return repos
-
-
 # MAIN
 def update(**_) -> bool:
     ws_root = get_workspace_root()
@@ -383,7 +218,7 @@ def update(**_) -> bool:
     ws_src = Path(ws_root) / "src"
     print_header(f"Updating every git repo under {ws_src}")
 
-    repos = collect_repos(ws_src)
+    repos = [Path(p) for p in get_repos_in_workspace(ws_root)]
     if not repos:
         print_info("No git repositories found.")
         return True
@@ -472,6 +307,8 @@ def update(**_) -> bool:
             else:
                 if res.stdout.strip():
                     print_info(res.stdout.rstrip())
+        elif res.branch.startswith("detached"):
+            print_info("skipped pull - detached HEAD")
         else:
             print_info("skipped pull - current branch has no upstream")
 
@@ -487,7 +324,7 @@ def update(**_) -> bool:
                     continue
 
                 current_branch = repo.head.ref.name
-                mainline = _remote_head_mainline_ref(repo, res.current_branch_remote)
+                mainline = get_remote_head_mainline(repo, res.current_branch_remote)
 
                 if current_branch and mainline:
                     mainline_local = mainline.split("/", 1)[1]
@@ -520,7 +357,7 @@ def update(**_) -> bool:
 
                             # Now that we're off the stale branch, offer deletion if safe
                             if current_branch in repo.branches:
-                                can_del, warn = _is_deleted_branch(
+                                can_del, warn = get_deleted_branch_status(
                                     repo, repo.branches[current_branch]
                                 )
                                 if warn:
