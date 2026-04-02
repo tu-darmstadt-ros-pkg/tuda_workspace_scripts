@@ -20,7 +20,9 @@ from tuda_workspace_scripts.sync import sync
 if __name__ == "__main__":
     workspace_root = get_workspace_root()
     parser = argparse.ArgumentParser(
-        description="Synchronize packages between local machine and remote targets."
+        description="Synchronize packages between local machine and remote targets. "
+        "Uses rsync with --delete, so files on the destination that do not exist "
+        "on the source will be removed. Use --dry-run to preview changes.",
     )
 
     pkg_arg = parser.add_argument(
