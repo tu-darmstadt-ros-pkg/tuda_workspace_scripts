@@ -287,6 +287,35 @@ def _print_changed_files(changed_files: List[str]) -> None:
         print_color(Colors.ORANGE, f"  {line}")
 
 
+def _ensure_dest_parent_exists(
+    dest_path: Path,
+    ssh_command: Optional[str],
+    dry_run: bool,
+) -> bool:
+    """
+    Ensure the parent directory of dest_path exists on the destination side.
+    If ssh_command is provided, the directory is created on the remote host.
+    Returns True on success, False on failure.
+    """
+    parent = dest_path.parent
+    if dry_run:
+        return True
+    if ssh_command is not None:
+        # Remote destination — create via SSH
+        result = _run_ssh_command(ssh_command, f"mkdir -p {shlex.quote(str(parent))}")
+        if result is None:
+            print_error(f"Failed to create directory '{parent}' on remote.")
+            return False
+    else:
+        # Local destination
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            print_error(f"Failed to create directory '{parent}': {e}")
+            return False
+    return True
+
+
 def _write_sync_info(
     package_path: Path,
     package_name: str,
@@ -523,6 +552,12 @@ def sync(
                 skipped.append(package)
                 continue
 
+        # Ensure destination parent directories exist when creating a new path
+        if dst.path is None or dest_pkg_path != dst.path:
+            if not _ensure_dest_parent_exists(dest_pkg_path, dest_ssh, dry_run):
+                failed.append(package)
+                continue
+
         # Validate destination state (only if package already exists there)
         if dst.path is not None:
             # Check if source and destination are on the same branch
@@ -565,8 +600,17 @@ def sync(
         sync_dest = dest_pkg_path
         is_directory = True
         if subpath is not None:
-            sync_source = src.path / subpath
-            sync_dest = dest_pkg_path / subpath
+            sync_source = (src.path / subpath).resolve()
+            sync_dest = (dest_pkg_path / subpath).resolve()
+            # Validate subpath doesn't escape the package root
+            try:
+                sync_source.relative_to(src.path.resolve())
+            except ValueError:
+                print_error(
+                    f"Subpath '{subpath}' escapes the package root for '{package}'."
+                )
+                failed.append(package)
+                continue
             # Determine if the subpath is a file or directory.
             # Check on whichever side is local.
             if source_pc is None:

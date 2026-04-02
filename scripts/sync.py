@@ -97,7 +97,9 @@ if __name__ == "__main__":
                 "No package found in the current directory or containing the current directory!"
             )
             exit(1)
-        packages = list(set(packages) | set(this_packages))
+        for pkg in this_packages:
+            if pkg not in packages:
+                packages.append(pkg)
     if not packages:
         print_error("No packages specified. Use package names or --this.")
         exit(1)
