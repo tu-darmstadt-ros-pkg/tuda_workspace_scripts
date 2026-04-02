@@ -1,6 +1,9 @@
+import getpass
 import shlex
+import socket
 import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -24,6 +27,7 @@ class PackageInfo:
 
     path: Optional[Path] = None
     branch: Optional[str] = None
+    commit: Optional[str] = None
     dirty: Optional[bool] = None
     changed_files: List[str] = field(default_factory=list)
 
@@ -61,6 +65,9 @@ def _build_ssh_command(pc: RemotePC) -> str:
     return f"ssh -p {pc.port} {pc.user}@{pc.hostname}"
 
 
+SSH_TIMEOUT = 120  # seconds
+
+
 def _run_ssh_command(
     ssh_command: str, remote_script: str
 ) -> Optional[subprocess.CompletedProcess]:
@@ -77,7 +84,14 @@ def _run_ssh_command(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            timeout=SSH_TIMEOUT,
         )
+    except subprocess.TimeoutExpired:
+        print_error(
+            f"SSH command timed out after {SSH_TIMEOUT}s. "
+            f"Is the remote host reachable?"
+        )
+        return None
     except subprocess.CalledProcessError as e:
         stderr = (e.stderr or "").strip()
         if not stderr:
@@ -87,6 +101,7 @@ def _run_ssh_command(
             f"SSH command failed with return code {e.returncode}: {command_str}\n"
             f"stderr: {stderr}"
         )
+        return None
 
 
 def _get_workspace_on_remote(ssh_command: str) -> Optional[str]:
@@ -134,12 +149,15 @@ echo "PKG_PATH:$PKG_PATH"
 if [ -n "$PKG_PATH" ] && [ -d "$PKG_PATH" ]; then
     BRANCH=$(cd "$PKG_PATH" && git rev-parse --abbrev-ref HEAD 2>/dev/null)
     echo "BRANCH:$BRANCH"
+    COMMIT=$(cd "$PKG_PATH" && git rev-parse --short HEAD 2>/dev/null)
+    echo "COMMIT:$COMMIT"
     STATUS=$(cd "$PKG_PATH" && git status --porcelain -u -- "$PKG_PATH" 2>/dev/null)
     echo "STATUS_BEGIN"
     [ -n "$STATUS" ] && echo "$STATUS"
     echo "STATUS_END"
 else
     echo "BRANCH:"
+    echo "COMMIT:"
     echo "STATUS_BEGIN"
     echo "STATUS_END"
 fi
@@ -180,6 +198,10 @@ echo "{DELIM}"
                 branch_str = line[7:].strip()
                 if branch_str:
                     info.branch = branch_str
+            elif line.startswith("COMMIT:"):
+                commit_str = line[7:].strip()
+                if commit_str:
+                    info.commit = commit_str
             elif line == "STATUS_BEGIN":
                 in_status = True
             elif line == "STATUS_END":
@@ -218,6 +240,17 @@ def _batch_query_local(
                 pass
             try:
                 result = subprocess.run(
+                    ["git", "-C", path_str, "rev-parse", "--short", "HEAD"],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                info.commit = result.stdout.strip() or None
+            except subprocess.CalledProcessError:
+                pass
+            try:
+                result = subprocess.run(
                     [
                         "git",
                         "-C",
@@ -249,6 +282,43 @@ def _print_changed_files(changed_files: List[str]) -> None:
         print_color(Colors.ORANGE, f"  {line}")
 
 
+def _write_sync_info(
+    package_path: Path,
+    package_name: str,
+    source_label: str,
+    dest_label: str,
+    source_info: PackageInfo,
+) -> Optional[Path]:
+    """
+    Write a .sync_info YAML file into the package directory.
+    Returns the path to the file, or None if writing failed.
+    """
+    sync_info_path = package_path / ".sync_info"
+    try:
+        now = datetime.now().astimezone()
+        dirty = (
+            str(source_info.dirty).lower()
+            if source_info.dirty is not None
+            else "unknown"
+        )
+        content = (
+            f'synced_at: "{now.isoformat()}"\n'
+            f'synced_by: "{getpass.getuser()}"\n'
+            f'hostname: "{socket.gethostname()}"\n'
+            f'direction: "{source_label} -> {dest_label}"\n'
+            f'package: "{package_name}"\n'
+            f"source:\n"
+            f'  branch: "{source_info.branch or "unknown"}"\n'
+            f'  commit: "{source_info.commit or "unknown"}"\n'
+            f"  dirty: {dirty}\n"
+        )
+        sync_info_path.write_text(content)
+        return sync_info_path
+    except OSError as e:
+        print_warn(f"Could not write .sync_info for '{package_name}': {e}")
+        return None
+
+
 def _build_rsync_command(
     source_path: str,
     dest_path: str,
@@ -273,7 +343,9 @@ def _build_rsync_command(
     ]
 
     if is_directory:
-        cmd.extend(["--delete", "--include=.gitignore", "--exclude=.*"])
+        cmd.extend(
+            ["--delete", "--include=.gitignore", "--include=.sync_info", "--exclude=.*"]
+        )
 
         if use_gitignore_filter:
             cmd.append("--filter=:- .gitignore")
@@ -366,6 +438,9 @@ def sync(
 
     # Deduplicate packages while preserving order
     packages = list(dict.fromkeys(packages))
+    if not packages:
+        print_warn("No packages to sync.")
+        return 0
 
     # Batch-query all package info upfront (1 SSH call per remote side)
     print_info("Resolving packages...")
@@ -407,29 +482,20 @@ def sync(
             failed.append(package)
             continue
 
-        if dst.path is None:
-            # Package does not exist on destination — derive path from source
-            dest_pkg_path = Path(dest_workspace) / "src" / source_rel
-            print_warn(
-                f"Package '{package}' does not exist on destination. "
-                f"It will be created at: {dest_pkg_path}"
-            )
-            if not dry_run and not confirm(f"Create '{package}' on destination?"):
-                print_info(f"Skipping {package}.")
-                skipped.append(package)
-                continue
-        else:
-            # Check if destination package is inside the workspace src/ directory
-            dest_src = Path(dest_workspace) / "src"
+        # Determine destination package path
+        dest_src = Path(dest_workspace) / "src"
+        if dst.path is not None:
             try:
                 dst.path.relative_to(dest_src)
+                dest_pkg_path = dst.path
             except ValueError:
+                # Package exists on destination but outside workspace src/
                 print_warn(
                     f"Package '{package}' is only installed on the destination "
                     f"(found at {dst.path}), not a source checkout. "
                     f"Consider cloning the repository first."
                 )
-                dest_pkg_path = Path(dest_workspace) / "src" / source_rel
+                dest_pkg_path = dest_src / source_rel
                 print_warn(
                     f"The package will be synced to: {dest_pkg_path} "
                     f"(outside of any git repository)"
@@ -440,9 +506,20 @@ def sync(
                     print_info(f"Skipping {package}.")
                     skipped.append(package)
                     continue
-            else:
-                dest_pkg_path = dst.path
+        else:
+            # Package does not exist on destination — derive path from source
+            dest_pkg_path = dest_src / source_rel
+            print_warn(
+                f"Package '{package}' does not exist on destination. "
+                f"It will be created at: {dest_pkg_path}"
+            )
+            if not dry_run and not confirm(f"Create '{package}' on destination?"):
+                print_info(f"Skipping {package}.")
+                skipped.append(package)
+                continue
 
+        # Validate destination state (only if package already exists there)
+        if dst.path is not None:
             # Check if source and destination are on the same branch
             if src.branch and dst.branch and src.branch != dst.branch:
                 print_warn(
@@ -463,11 +540,13 @@ def sync(
                 failed.append(package)
                 continue
 
-            if dst.dirty:
+            # Filter out .sync_info from dirty check — it's created by this tool
+            dst_changed = [f for f in dst.changed_files if not f.endswith(".sync_info")]
+            if dst_changed:
                 print_warn(
                     f"Package '{package}' has uncommitted changes or untracked files on the destination:"
                 )
-                _print_changed_files(dst.changed_files)
+                _print_changed_files(dst_changed)
 
                 if not dry_run and not confirm(
                     f"Overwrite changes in '{package}' on destination?"
@@ -490,19 +569,49 @@ def sync(
             elif dest_pc is None:
                 is_directory = sync_dest.is_dir()
 
-        # Build and run rsync
-        rsync_cmd = _build_rsync_command(
-            source_path=str(sync_source),
-            dest_path=str(sync_dest),
-            source_pc=source_pc,
-            dest_pc=dest_pc,
-            dry_run=dry_run,
-            use_gitignore_filter=use_gitignore_filter,
-            is_directory=is_directory,
+        # Write .sync_info marker for local->remote syncs
+        write_marker = source_pc is None and dest_pc is not None and subpath is None
+        # Clean up .sync_info that arrives locally from remote->local syncs
+        clean_marker = (
+            source_pc is not None
+            and dest_pc is None
+            and not dry_run
+            and subpath is None
         )
-
-        print_info(f"Running: {' '.join(rsync_cmd)}")
+        sync_info_file: Optional[Path] = None
         try:
+            if write_marker:
+                if dry_run:
+                    print_info(
+                        f"[DRY RUN] Would write .sync_info "
+                        f"(branch={src.branch or 'unknown'}, "
+                        f"commit={src.commit or 'unknown'}, "
+                        f"synced_by={getpass.getuser()})"
+                    )
+                else:
+                    sync_info_file = _write_sync_info(
+                        src.path, package, source_label, dest_label, src
+                    )
+                    if sync_info_file is not None:
+                        print_info(
+                            f"Writing .sync_info to destination "
+                            f"(branch={src.branch or 'unknown'}, "
+                            f"commit={src.commit or 'unknown'}, "
+                            f"synced_by={getpass.getuser()})"
+                        )
+
+            # Build and run rsync
+            rsync_cmd = _build_rsync_command(
+                source_path=str(sync_source),
+                dest_path=str(sync_dest),
+                source_pc=source_pc,
+                dest_pc=dest_pc,
+                dry_run=dry_run,
+                use_gitignore_filter=use_gitignore_filter,
+                is_directory=is_directory,
+            )
+
+            print_info(f"Running: {' '.join(rsync_cmd)}")
             subprocess.run(rsync_cmd, check=True, stderr=subprocess.PIPE, text=True)
             if dry_run:
                 print_info(f"[DRY RUN] Would sync '{package}'.")
@@ -516,6 +625,21 @@ def sync(
             else:
                 print_error(f"rsync failed for '{package}' (exit code {e.returncode})")
             failed.append(package)
+        finally:
+            # Clean up local .sync_info written before rsync
+            if sync_info_file is not None and sync_info_file.exists():
+                try:
+                    sync_info_file.unlink()
+                except OSError:
+                    pass
+            # Remove .sync_info that arrived from a remote->local sync
+            if clean_marker:
+                arrived = dest_pkg_path / ".sync_info"
+                if arrived.exists():
+                    try:
+                        arrived.unlink()
+                    except OSError:
+                        pass
 
     # Summary
     print("")

@@ -101,7 +101,10 @@ if __name__ == "__main__":
         exit(1)
 
     if args.path is not None and len(packages) != 1:
-        print_error("--path can only be used with a single package.")
+        print_error(
+            f"--path can only be used with a single package, "
+            f"but {len(packages)} were resolved: {', '.join(packages)}"
+        )
         exit(1)
 
     exit(
