@@ -177,6 +177,11 @@ echo "{DELIM}"
     blocks = output.split(DELIM)
 
     results: Dict[str, PackageInfo] = {}
+    if len(blocks) < len(packages):
+        print_warn(
+            f"Expected info for {len(packages)} packages but only received "
+            f"{len(blocks)}. Some packages may not be resolved correctly."
+        )
     for i, package in enumerate(packages):
         info = PackageInfo()
         if i >= len(blocks):
