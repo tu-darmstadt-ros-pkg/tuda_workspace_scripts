@@ -552,12 +552,6 @@ def sync(
                 skipped.append(package)
                 continue
 
-        # Ensure destination parent directories exist when creating a new path
-        if dst.path is None or dest_pkg_path != dst.path:
-            if not _ensure_dest_parent_exists(dest_pkg_path, dest_ssh, dry_run):
-                failed.append(package)
-                continue
-
         # Validate destination state (only if package already exists there)
         if dst.path is not None:
             # Check if source and destination are on the same branch
@@ -617,6 +611,12 @@ def sync(
                 is_directory = sync_source.is_dir()
             elif dest_pc is None:
                 is_directory = sync_dest.is_dir()
+
+        # Ensure destination parent directories exist when creating a new path
+        if dst.path is None or dest_pkg_path != dst.path:
+            if not _ensure_dest_parent_exists(sync_dest, dest_ssh, dry_run):
+                failed.append(package)
+                continue
 
         # Write .sync_info marker for local->remote syncs
         write_marker = source_pc is None and dest_pc is not None and subpath is None
