@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-from tuda_workspace_scripts.build import build_packages, clean_packages
+from tuda_workspace_scripts.build import (
+    build_packages,
+    clean_packages,
+    clean_test_results,
+)
 from tuda_workspace_scripts.print import *
 from tuda_workspace_scripts.workspace import *
 import argcomplete
@@ -8,7 +12,8 @@ import os
 import subprocess
 import sys
 
-if __name__ == "__main__":
+
+def main():
     workspace_root = get_workspace_root()
     parser = argparse.ArgumentParser()
     packages_arg = parser.add_argument(
@@ -42,6 +47,19 @@ if __name__ == "__main__":
         default=False,
         action="store_true",
         help="Automatically answer yes to all questions.",
+    )
+    parser.add_argument(
+        "--list-tests",
+        "-l",
+        default=False,
+        action="store_true",
+        help="List the tests instead of running them.",
+    )
+    parser.add_argument(
+        "--filter",
+        "-k",
+        type=str,
+        help="Only run tests matching the given pattern (ctest -R, pytest -k).",
     )
 
     argcomplete.autocomplete(parser)
@@ -115,8 +133,23 @@ if __name__ == "__main__":
     if len(packages) > 0:
         colcon_test_args.extend(["--packages-select"] + packages)
 
+    if args.list_tests:
+        colcon_test_args.extend(["--ctest-args", " -N"])
+        colcon_test_args.extend(["--pytest-args", " --collect-only"])
+        colcon_test_args.extend(["--event-handlers", "console_direct+"])
+    elif args.filter:
+        colcon_test_args.extend(["--ctest-args", f" -R {args.filter}"])
+        colcon_test_args.extend(["--pytest-args", f" -k {args.filter}"])
+
+    print_info(">>> Cleaning old test results")
+    clean_test_results(workspace_root, packages, build_folder)
+
+    colcon_command = (
+        f". {install_folder}/setup.sh && colcon test {' '.join(colcon_test_args)}"
+    )
+    print_info(f">>> Command: {colcon_command}")
     command = subprocess.run(
-        f". {install_folder}/setup.sh && colcon test {' '.join(colcon_test_args)}",
+        colcon_command,
         stdout=sys.stdout,
         stderr=sys.stderr,
         shell=True,
@@ -124,22 +157,28 @@ if __name__ == "__main__":
     returncode = command.returncode
 
     build_folder = build_folder or "build"
-    if len(packages) > 0:
-        for package in packages:
-            print_info(f">>> {package}")
+    if not args.list_tests:
+        if len(packages) > 0:
+            for package in packages:
+                print_info(f">>> {package}")
+                command = subprocess.run(
+                    f"colcon test-result --verbose --test-result-base {build_folder}/{package}",
+                    stdout=sys.stdout,
+                    stderr=sys.stderr,
+                    shell=True,
+                )
+                returncode |= command.returncode
+        else:
             command = subprocess.run(
-                f"colcon test-result --verbose --test-result-base {build_folder}/{package}",
+                f"colcon test-result --verbose --test-result-base {build_folder}",
                 stdout=sys.stdout,
                 stderr=sys.stderr,
                 shell=True,
             )
             returncode |= command.returncode
-    else:
-        command = subprocess.run(
-            f"colcon test-result --verbose --test-result-base {build_folder}",
-            stdout=sys.stdout,
-            stderr=sys.stderr,
-            shell=True,
-        )
-        returncode |= command.returncode
+
     sys.exit(returncode)
+
+
+if __name__ == "__main__":
+    main()
