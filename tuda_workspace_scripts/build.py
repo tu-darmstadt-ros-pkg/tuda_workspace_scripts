@@ -152,9 +152,6 @@ def clean_test_results(workspace_root, packages, build_base="build"):
             if "test_results" in dirs:
                 shutil.rmtree(os.path.join(root, "test_results"))
                 dirs.remove("test_results")
-            for file in files:
-                if file.endswith(".xml"):
-                    os.remove(os.path.join(root, file))
 
 
 # docker run --rm -it -v ~/workspaces/noetic/src:/workspace/src:ro -v /tmp/install:/workspace/install:rw --env ROS_DISTRO=noetic --platform arm64 cross-compile-arm64 workspace_scripts
