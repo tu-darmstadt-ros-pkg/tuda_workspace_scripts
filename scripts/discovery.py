@@ -45,6 +45,13 @@ CycloneDDS
 ==========
 IP_OR_HOSTNAME
 Examples: hostname 10.0.10.3
+
+RTI Connext (rmw_connextdds)
+============================
+Same host/IP form as Cyclone DDS. Robot entries use the `cyclonedds_address` field in
+robots.yaml. The tool writes `$WORKSPACE/.config/ndds_discovery_peers` (override with
+TUDA_WSS_NDDS_DISCOVERY_PEERS_FILE). Export RTI's discovery peers in your shell, e.g.:
+export NDDS_DISCOVERY_PEERS=$(tail -n 1 "$WORKSPACE/.config/ndds_discovery_peers")
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

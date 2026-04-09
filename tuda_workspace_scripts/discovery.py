@@ -16,6 +16,10 @@ if not ws_root:
 RMW: str | None = os.getenv("RMW_IMPLEMENTATION", None)
 CYCLONEDDS_URI: str | None = os.getenv("CYCLONEDDS_URI", None)
 ZENOH_ROUTER_CONFIG_PATH: str | None = os.getenv("ZENOH_ROUTER_CONFIG_URI", None)
+NDDS_DISCOVERY_PEERS_FILE: str | None = os.getenv(
+    "TUDA_WSS_NDDS_DISCOVERY_PEERS_FILE",
+    os.path.join(ws_root, ".config", "ndds_discovery_peers"),
+)
 XML_MARKER = "<!-- This file is managed by tuda_workspace_scripts. Changes may be overwritten. -->"
 YAML_MARKER = (
     "# This file is managed by tuda_workspace_scripts. Changes may be overwritten."
@@ -31,6 +35,10 @@ def create_discovery_config(selected_robots: list[str], custom_addresses: list[s
         )
     elif RMW == "rmw_cyclonedds_cpp":
         create_cyclonedds_router_config_xml(
+            selected_robots, available_robots, custom_addresses
+        )
+    elif RMW == "rmw_connextdds":
+        create_connext_ndds_discovery_peers_file(
             selected_robots, available_robots, custom_addresses
         )
     elif RMW:
@@ -49,6 +57,13 @@ def update_discovery_config(selected_robots: list[str], custom_addresses: list[s
             "Updating Cyclone DDS config is not supported. Overwriting the config file instead."
         )
         create_cyclonedds_router_config_xml(
+            selected_robots, available_robots, custom_addresses
+        )
+    elif RMW == "rmw_connextdds":
+        print_warn(
+            "Updating RTI Connext discovery peers is done by overwriting the peers file."
+        )
+        create_connext_ndds_discovery_peers_file(
             selected_robots, available_robots, custom_addresses
         )
     elif RMW:
@@ -70,6 +85,8 @@ def get_connected_robots() -> list[str]:
                 ):
                     connected_robots.append(robot_name)
         return connected_robots
+    elif RMW == "rmw_connextdds":
+        return get_connext_connected_robots(available_robots)
     elif RMW:
         raise NotImplementedError(
             f"Listing the currently connected robots is not implemented for RMW {RMW}"
@@ -78,12 +95,25 @@ def get_connected_robots() -> list[str]:
         raise RuntimeError("RMW_IMPLEMENTATION is not set.")
 
 
-def create_cyclonedds_router_config_xml(
+def _robot_cyclonedds_hosts(robot: Robot) -> list[str]:
+    raw = robot.cyclonedds_address
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        return [raw]
+    return list(raw)
+
+
+def collect_unicast_dds_peer_hostnames(
     selected_robots: list[str],
     available_robots: dict[str, Robot],
     custom_addresses: list[str],
-):
-    peers = []
+) -> list[str]:
+    """
+    Hostnames or IPv4 addresses for unicast DDS discovery (Cyclone DDS peers and
+    RTI Connext NDDS_DISCOVERY_PEERS built-in UDPv4 locators).
+    """
+    peers: list[str] = []
 
     # Always set localhost, even if the user did not specify it
     peers.append("127.0.0.1")
@@ -93,18 +123,22 @@ def create_cyclonedds_router_config_xml(
             break
         elif name == "all":
             for _, robot_data in available_robots.items():
-                if not robot_data.cyclonedds_address:
-                    print_warn(f"No Cyclone DDS address found for {robot_data.name}")
+                hosts = _robot_cyclonedds_hosts(robot_data)
+                if not hosts:
+                    print_warn(
+                        f"No Cyclone/Connext DDS address found for {robot_data.name}"
+                    )
                     continue
-                peers.append(robot_data.cyclonedds_address)
+                peers.extend(hosts)
             break
         elif name in available_robots:
-            if not available_robots[name].cyclonedds_address:
+            hosts = _robot_cyclonedds_hosts(available_robots[name])
+            if not hosts:
                 print_warn(
-                    f"No Cyclone DDS address found for {available_robots[name].name}"
+                    f"No Cyclone/Connext DDS address found for {available_robots[name].name}"
                 )
                 continue
-            peers.append(available_robots[name].cyclonedds_address)
+            peers.extend(hosts)
         else:
             print_warn(
                 f"Couldn't find an entry for {name} in robot configs. Please check if your selected robot is available."
@@ -120,6 +154,109 @@ def create_cyclonedds_router_config_xml(
             )
             continue
         peers.append(address)
+
+    return peers
+
+
+def _rti_builtin_udpv4_locators(hosts: list[str]) -> str:
+    return ",".join(f"builtin.udpv4://{h}" for h in hosts)
+
+
+def _parse_ndds_discovery_peer_hosts(peers_value: str) -> list[str]:
+    hosts = []
+    for raw in peers_value.split(","):
+        part = raw.strip()
+        if not part:
+            continue
+        prefix = "builtin.udpv4://"
+        if part.startswith(prefix):
+            part = part[len(prefix) :]
+        hosts.append(part)
+    return hosts
+
+
+def _read_ndds_discovery_peers_locators() -> str | None:
+    if not NDDS_DISCOVERY_PEERS_FILE or not os.path.isfile(NDDS_DISCOVERY_PEERS_FILE):
+        return None
+    with open(NDDS_DISCOVERY_PEERS_FILE, "r", encoding="utf-8") as file:
+        lines = file.read().splitlines()
+    if not lines:
+        return None
+    if lines[0].strip() == YAML_MARKER and len(lines) >= 2:
+        return lines[1].strip()
+    return lines[0].strip()
+
+
+def create_connext_ndds_discovery_peers_file(
+    selected_robots: list[str],
+    available_robots: dict[str, Robot],
+    custom_addresses: list[str],
+):
+    """
+    Write NDDS_DISCOVERY_PEERS-compatible locator list for rmw_connextdds.
+
+    Set in your shell (e.g. workspace setup.bash):
+
+        export NDDS_DISCOVERY_PEERS=$(tail -n 1 "$TUDA_WSS_NDDS_DISCOVERY_PEERS_FILE")
+
+    when using the default path, or read the last line of the file this function writes.
+    """
+    peers = collect_unicast_dds_peer_hostnames(
+        selected_robots, available_robots, custom_addresses
+    )
+    locators = _rti_builtin_udpv4_locators(peers)
+    print("Connecting to peers: ")
+    for p in peers:
+        print(" -", p)
+
+    if os.path.isfile(NDDS_DISCOVERY_PEERS_FILE):
+        with open(NDDS_DISCOVERY_PEERS_FILE, "r", encoding="utf-8") as file:
+            first = file.readline().strip()
+        if first != YAML_MARKER:
+            i = 0
+            while os.path.isfile(NDDS_DISCOVERY_PEERS_FILE + f".backup{i}"):
+                i += 1
+            print_warn(
+                f"Existing NDDS discovery peers file found at {NDDS_DISCOVERY_PEERS_FILE}. "
+                f"Backing up as {NDDS_DISCOVERY_PEERS_FILE}.backup{i}."
+            )
+            os.rename(
+                NDDS_DISCOVERY_PEERS_FILE, f"{NDDS_DISCOVERY_PEERS_FILE}.backup{i}"
+            )
+
+    os.makedirs(os.path.dirname(NDDS_DISCOVERY_PEERS_FILE), exist_ok=True)
+    with open(NDDS_DISCOVERY_PEERS_FILE, "w", encoding="utf-8") as file:
+        file.write(f"{YAML_MARKER}\n")
+        file.write(locators)
+        file.write("\n")
+    print_info("RTI Connext NDDS_DISCOVERY_PEERS file updated.")
+    print_info(
+        "Export NDDS_DISCOVERY_PEERS from the last line of this file in your shell, e.g.: "
+        f'export NDDS_DISCOVERY_PEERS=$(tail -n 1 "{NDDS_DISCOVERY_PEERS_FILE}")'
+    )
+
+
+def get_connext_connected_robots(available_robots: dict[str, Robot]) -> list[str]:
+    locators = _read_ndds_discovery_peers_locators()
+    if not locators:
+        return []
+    peer_hosts = set(_parse_ndds_discovery_peer_hosts(locators))
+    connected = []
+    for robot_name, robot_data in available_robots.items():
+        rh = set(_robot_cyclonedds_hosts(robot_data))
+        if rh and rh.intersection(peer_hosts):
+            connected.append(robot_name)
+    return connected
+
+
+def create_cyclonedds_router_config_xml(
+    selected_robots: list[str],
+    available_robots: dict[str, Robot],
+    custom_addresses: list[str],
+):
+    peers = collect_unicast_dds_peer_hostnames(
+        selected_robots, available_robots, custom_addresses
+    )
 
     config = _create_cyclonedds_config_xml(peers)
     print("Connecting to peers: ")
@@ -292,6 +429,8 @@ def print_discovery_config():
         print_zenoh_discovery_config()
     elif RMW == "rmw_cyclonedds_cpp":
         print_cyclonedds_discovery_config()
+    elif RMW == "rmw_connextdds":
+        print_connext_discovery_config()
     elif RMW:
         raise NotImplementedError(f"Discovery is not implemented for RMW {RMW}")
     else:
@@ -305,6 +444,21 @@ def print_cyclonedds_discovery_config():
             print(file.read())
     else:
         print_warn(f"Configuration file not found: {CYCLONEDDS_URI}")
+
+
+def print_connext_discovery_config():
+    print_info(f"NDDS_DISCOVERY_PEERS file: {NDDS_DISCOVERY_PEERS_FILE}")
+    if os.path.exists(NDDS_DISCOVERY_PEERS_FILE):
+        with open(NDDS_DISCOVERY_PEERS_FILE, "r", encoding="utf-8") as file:
+            print(file.read())
+        loc = _read_ndds_discovery_peers_locators()
+        if loc:
+            print_info(
+                "Effective NDDS_DISCOVERY_PEERS value (last line / locator list):"
+            )
+            print(loc)
+    else:
+        print_warn(f"Configuration file not found: {NDDS_DISCOVERY_PEERS_FILE}")
 
 
 def print_zenoh_discovery_config():
