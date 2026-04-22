@@ -16,9 +16,13 @@ if not ws_root:
 RMW: str | None = os.getenv("RMW_IMPLEMENTATION", None)
 CYCLONEDDS_URI: str | None = os.getenv("CYCLONEDDS_URI", None)
 ZENOH_ROUTER_CONFIG_PATH: str | None = os.getenv("ZENOH_ROUTER_CONFIG_URI", None)
+ZENOH_BRIDGE_CONFIG_PATH: str | None = os.getenv("ZENOH_BRIDGE_CONFIG_URI", None)
 XML_MARKER = "<!-- This file is managed by tuda_workspace_scripts. Changes may be overwritten. -->"
 YAML_MARKER = (
     "# This file is managed by tuda_workspace_scripts. Changes may be overwritten."
+)
+JSON_COMMENT_MARKER = (
+    "// This file is managed by tuda_workspace_scripts. Changes may be overwritten."
 )
 
 
@@ -30,9 +34,10 @@ def create_discovery_config(selected_robots: list[str], custom_addresses: list[s
             selected_robots, available_robots, custom_addresses
         )
     elif RMW == "rmw_cyclonedds_cpp":
-        create_cyclonedds_router_config_xml(
-            selected_robots, available_robots, custom_addresses
-        )
+        if ZENOH_BRIDGE_CONFIG_PATH:
+            create_zenoh_bridge_config(
+                selected_robots, available_robots, custom_addresses
+            )
     elif RMW:
         raise NotImplementedError(f"Discovery is not implemented for RMW {RMW}")
     else:
@@ -45,12 +50,10 @@ def update_discovery_config(selected_robots: list[str], custom_addresses: list[s
     if RMW == "rmw_zenoh_cpp":
         update_zenoh_router_config(selected_robots, available_robots, custom_addresses)
     elif RMW == "rmw_cyclonedds_cpp":
-        print_warn(
-            "Updating Cyclone DDS config is not supported. Overwriting the config file instead."
-        )
-        create_cyclonedds_router_config_xml(
-            selected_robots, available_robots, custom_addresses
-        )
+        if ZENOH_BRIDGE_CONFIG_PATH:
+            update_zenoh_bridge_config(
+                selected_robots, available_robots, custom_addresses
+            )
     elif RMW:
         raise NotImplementedError(f"Discovery is not implemented for RMW {RMW}")
     else:
@@ -70,12 +73,134 @@ def get_connected_robots() -> list[str]:
                 ):
                     connected_robots.append(robot_name)
         return connected_robots
+    elif RMW == "rmw_cyclonedds_cpp":
+        if not ZENOH_BRIDGE_CONFIG_PATH or not os.path.isfile(ZENOH_BRIDGE_CONFIG_PATH):
+            return []
+        routers = get_zenoh_routers_from_config_file(ZENOH_BRIDGE_CONFIG_PATH)
+        connected_robots = []
+        for router in routers:
+            for robot_name, robot_data in available_robots.items():
+                if any(
+                    router.get_zenoh_router_address() == r.get_zenoh_router_address()
+                    for r in robot_data.zenoh_routers
+                ):
+                    connected_robots.append(robot_name)
+        return connected_robots
     elif RMW:
         raise NotImplementedError(
             f"Listing the currently connected robots is not implemented for RMW {RMW}"
         )
     else:
         raise RuntimeError("RMW_IMPLEMENTATION is not set.")
+
+
+def create_static_cyclonedds_config_xml():
+    """Create the static CycloneDDS config with only localhost as peer.
+    When using rmw_cyclonedds_cpp with a zenoh bridge, CycloneDDS only communicates
+    locally and the bridge handles remote communication.
+    """
+    if not CYCLONEDDS_URI:
+        print_warn("CYCLONEDDS_URI is not set. Cannot write Cyclone DDS config.")
+        return
+
+    config = _create_cyclonedds_config_xml(["127.0.0.1"])
+
+    with open(CYCLONEDDS_URI, "w", encoding="utf-8") as file:
+        file.write(f"{XML_MARKER}\n")
+        file.write(config)
+    print_info("Cyclone DDS static config written.")
+
+
+def create_zenoh_bridge_config(
+    selected_robots: list[str],
+    available_robots: dict[str, Robot],
+    custom_addresses: list[str],
+):
+    if not ZENOH_BRIDGE_CONFIG_PATH:
+        print_warn(
+            "ZENOH_BRIDGE_CONFIG_URI is not set. Cannot write zenoh bridge config."
+        )
+        return
+    if not ZENOH_BRIDGE_CONFIG_PATH.endswith((".json", ".json5")):
+        print_warn(
+            f"Unsupported config file format: {ZENOH_BRIDGE_CONFIG_PATH}. Supported formats are .json and .json5."
+        )
+        return
+
+    routers = _create_zenoh_router_list(
+        selected_robots, available_robots, custom_addresses
+    )
+    config = _create_zenoh_bridge_config_dict(routers)
+
+    if os.path.isfile(ZENOH_BRIDGE_CONFIG_PATH):
+        with open(ZENOH_BRIDGE_CONFIG_PATH, "r") as file:
+            if file.readline().strip() != JSON_COMMENT_MARKER:
+                i = 0
+                while os.path.isfile(ZENOH_BRIDGE_CONFIG_PATH + f".backup{i}"):
+                    i += 1
+                print_warn(
+                    f"Existing zenoh bridge config found at {ZENOH_BRIDGE_CONFIG_PATH}. Backing up as {ZENOH_BRIDGE_CONFIG_PATH}.backup{i}."
+                )
+                os.rename(
+                    ZENOH_BRIDGE_CONFIG_PATH, f"{ZENOH_BRIDGE_CONFIG_PATH}.backup{i}"
+                )
+
+    with open(ZENOH_BRIDGE_CONFIG_PATH, "w") as file:
+        file.write(f"{JSON_COMMENT_MARKER}\n")
+        json5.dump(config, file, indent=2)
+    print_info("Zenoh bridge config updated.")
+
+
+def update_zenoh_bridge_config(
+    selected_robots: list[str],
+    available_robots: dict[str, Robot],
+    custom_addresses: list[str],
+):
+    if not ZENOH_BRIDGE_CONFIG_PATH:
+        print_warn(
+            "ZENOH_BRIDGE_CONFIG_URI is not set. Cannot update zenoh bridge config."
+        )
+        return
+    if not ZENOH_BRIDGE_CONFIG_PATH.endswith((".json", ".json5")):
+        print_warn(
+            f"Unsupported config file format: {ZENOH_BRIDGE_CONFIG_PATH}. Supported formats are .json and .json5."
+        )
+        return
+
+    routers = _create_zenoh_router_list(
+        selected_robots, available_robots, custom_addresses
+    )
+
+    config = _create_zenoh_bridge_config_dict(routers)
+    if not os.path.isfile(ZENOH_BRIDGE_CONFIG_PATH):
+        print_warn(
+            f"Zenoh bridge config file not found at {ZENOH_BRIDGE_CONFIG_PATH}. Creating new config file."
+        )
+    else:
+        with open(ZENOH_BRIDGE_CONFIG_PATH, "r") as file:
+            existing = json5.load(file)
+        # Preserve user settings, only update connect endpoints
+        existing.setdefault("connect", {})["endpoints"] = [
+            router.get_zenoh_router_address() for router in routers
+        ]
+        config = existing
+
+    with open(ZENOH_BRIDGE_CONFIG_PATH, "w") as file:
+        file.write(f"{JSON_COMMENT_MARKER}\n")
+        json5.dump(config, file, indent=2)
+    print_info("Zenoh bridge config updated.")
+
+
+def _create_zenoh_bridge_config_dict(routers: list[ZenohRouter]) -> dict:
+    return {
+        "mode": "router",
+        "listen": {"endpoints": ["tcp/0.0.0.0:7448"]},
+        "connect": {
+            "endpoints": [router.get_zenoh_router_address() for router in routers]
+        },
+        "scouting": {"multicast": {"enabled": False}},
+        "plugins": {"ros2dds": {"domain": 0}},
+    }
 
 
 def create_cyclonedds_router_config_xml(
@@ -291,6 +416,7 @@ def print_discovery_config():
     if RMW == "rmw_zenoh_cpp":
         print_zenoh_discovery_config()
     elif RMW == "rmw_cyclonedds_cpp":
+        print_zenoh_bridge_discovery_config()
         print_cyclonedds_discovery_config()
     elif RMW:
         raise NotImplementedError(f"Discovery is not implemented for RMW {RMW}")
@@ -314,6 +440,20 @@ def print_zenoh_discovery_config():
             print(file.read())
     else:
         print_warn(f"Configuration file not found: {ZENOH_ROUTER_CONFIG_PATH}")
+
+
+def print_zenoh_bridge_discovery_config():
+    if not ZENOH_BRIDGE_CONFIG_PATH:
+        print_warn("ZENOH_BRIDGE_CONFIG_URI is not set.")
+        return
+    if os.path.exists(ZENOH_BRIDGE_CONFIG_PATH):
+        print_info(f"Zenoh bridge configuration file: {ZENOH_BRIDGE_CONFIG_PATH}")
+        with open(ZENOH_BRIDGE_CONFIG_PATH, "r") as file:
+            print(file.read())
+    else:
+        print_warn(
+            f"Zenoh bridge configuration file not found: {ZENOH_BRIDGE_CONFIG_PATH}"
+        )
 
 
 def _create_zenoh_router_config_yaml(routers):
