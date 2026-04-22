@@ -2,7 +2,6 @@
 # PYTHON_ARGCOMPLETE_OK
 import argparse
 import argcomplete
-import os
 from tuda_workspace_scripts.discovery import *
 from tuda_workspace_scripts.print import *
 from tuda_workspace_scripts.robots import *
@@ -25,14 +24,6 @@ class RobotChoicesCompleter:
             complete_args = list(filter(lambda x: x not in chosen_args, complete_args))
 
         return complete_args
-
-
-def _has_discovery_endpoints(
-    selected_robots: list[str], custom_addresses: list[str]
-) -> bool:
-    if custom_addresses:
-        return True
-    return any(robot != "off" for robot in selected_robots)
 
 
 def main():
@@ -136,16 +127,9 @@ Examples: hostname 10.0.10.3
             )
         elif hook.endswith(".bash") or hook.endswith(".sh"):
             executable = "bash" if hook.endswith(".bash") else "sh"
-            hook_env = os.environ.copy()
-            hook_env["TUDA_WSS_DISCOVERY_HAS_ENDPOINTS"] = (
-                "1"
-                if _has_discovery_endpoints(selected_robots, custom_addresses)
-                else "0"
-            )
             subprocess.run(
                 [executable, hook] + selected_robots + custom_addresses,
                 cwd=get_workspace_root(),
-                env=hook_env,
             )
 
     print_info("Discovery configuration updated.")

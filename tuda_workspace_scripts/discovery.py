@@ -101,21 +101,10 @@ def create_static_cyclonedds_config_xml():
 
     config = _create_cyclonedds_config_xml(["127.0.0.1"])
 
-    if os.path.isfile(CYCLONEDDS_URI):
-        with open(CYCLONEDDS_URI, "r") as file:
-            if file.readline().strip() != XML_MARKER:
-                i = 0
-                while os.path.isfile(CYCLONEDDS_URI + f".backup{i}"):
-                    i += 1
-                print_warn(
-                    f"Existing cyclonedds config found at {CYCLONEDDS_URI}. Backing up as {CYCLONEDDS_URI}.backup{i}."
-                )
-                os.rename(CYCLONEDDS_URI, f"{CYCLONEDDS_URI}.backup{i}")
-
     with open(CYCLONEDDS_URI, "w", encoding="utf-8") as file:
         file.write(f"{XML_MARKER}\n")
         file.write(config)
-    print_info("Cyclone DDS config updated.")
+    print_info("Cyclone DDS static config written.")
 
 
 def create_zenoh_bridge_config(
