@@ -34,7 +34,6 @@ def create_discovery_config(selected_robots: list[str], custom_addresses: list[s
             selected_robots, available_robots, custom_addresses
         )
     elif RMW == "rmw_cyclonedds_cpp":
-        create_static_cyclonedds_config_xml()
         if ZENOH_BRIDGE_CONFIG_PATH:
             create_zenoh_bridge_config(
                 selected_robots, available_robots, custom_addresses
@@ -51,7 +50,6 @@ def update_discovery_config(selected_robots: list[str], custom_addresses: list[s
     if RMW == "rmw_zenoh_cpp":
         update_zenoh_router_config(selected_robots, available_robots, custom_addresses)
     elif RMW == "rmw_cyclonedds_cpp":
-        create_static_cyclonedds_config_xml()
         if ZENOH_BRIDGE_CONFIG_PATH:
             update_zenoh_bridge_config(
                 selected_robots, available_robots, custom_addresses
