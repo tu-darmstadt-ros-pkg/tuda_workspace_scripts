@@ -35,7 +35,10 @@ def create_discovery_config(selected_robots: list[str], custom_addresses: list[s
         )
     elif RMW == "rmw_cyclonedds_cpp":
         create_static_cyclonedds_config_xml()
-        create_zenoh_bridge_config(selected_robots, available_robots, custom_addresses)
+        if ZENOH_BRIDGE_CONFIG_PATH:
+            create_zenoh_bridge_config(
+                selected_robots, available_robots, custom_addresses
+            )
     elif RMW:
         raise NotImplementedError(f"Discovery is not implemented for RMW {RMW}")
     else:
@@ -49,7 +52,10 @@ def update_discovery_config(selected_robots: list[str], custom_addresses: list[s
         update_zenoh_router_config(selected_robots, available_robots, custom_addresses)
     elif RMW == "rmw_cyclonedds_cpp":
         create_static_cyclonedds_config_xml()
-        update_zenoh_bridge_config(selected_robots, available_robots, custom_addresses)
+        if ZENOH_BRIDGE_CONFIG_PATH:
+            update_zenoh_bridge_config(
+                selected_robots, available_robots, custom_addresses
+            )
     elif RMW:
         raise NotImplementedError(f"Discovery is not implemented for RMW {RMW}")
     else:
