@@ -173,5 +173,45 @@ class PackageChoicesCompleter:
         return get_packages_in_workspace(self.workspace_path)
 
 
+class PackagePathCompleter:
+    """
+    Completes file and directory paths relative to a package root.
+
+    Uses the first package from the already-parsed ``packages`` positional
+    argument to resolve the package root on the local machine.
+    """
+
+    def __init__(self, workspace_path):
+        self.workspace_path = workspace_path
+
+    def __call__(self, prefix="", parsed_args=None, **kwargs):
+        if self.workspace_path is None or parsed_args is None:
+            return []
+
+        packages = getattr(parsed_args, "packages", None) or []
+        if not packages:
+            return []
+
+        pkg_path = get_package_path(packages[0], self.workspace_path)
+        if pkg_path is None:
+            return []
+
+        # prefix is the partially typed path so far, e.g. "src/mo"
+        search_dir = os.path.join(pkg_path, os.path.dirname(prefix))
+        if not os.path.isdir(search_dir):
+            return []
+
+        completions = []
+        basename_prefix = os.path.basename(prefix)
+        for entry in os.listdir(search_dir):
+            if not entry.startswith(basename_prefix):
+                continue
+            rel = os.path.join(os.path.dirname(prefix), entry)
+            if os.path.isdir(os.path.join(search_dir, entry)):
+                rel += "/"
+            completions.append(rel)
+        return completions
+
+
 if __name__ == "__main__":
     print(get_workspace_root())
