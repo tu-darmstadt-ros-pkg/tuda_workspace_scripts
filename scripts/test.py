@@ -15,7 +15,7 @@ import sys
 
 def main():
     workspace_root = get_workspace_root()
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
     packages_arg = parser.add_argument(
         "packages", nargs="*", help="If specified only these packages are built."
     )
@@ -59,7 +59,13 @@ def main():
         "--filter",
         "-k",
         type=str,
-        help="Only run tests matching the given pattern (ctest -R, pytest -k).",
+        help=(
+            "Only run tests matching the given pattern. Forwarded to\n"
+            "ctest -R (regex) and pytest -k (expression); syntax differs:\n"
+            "  Single test:    --filter TestPrefix.MyTestName\n"
+            '  Multiple tests: --filter "TestA|TestB" (ctest) or "TestA or TestB" (pytest)\n'
+            "  Substring:      --filter TestPrefix"
+        ),
     )
 
     argcomplete.autocomplete(parser)
@@ -124,7 +130,10 @@ def main():
         print_error(">>> Failed to build packages")
         exit(returncode)
 
-    print_info(">>> Running tests")
+    if args.list_tests:
+        print_info(">>> Listing tests")
+    else:
+        print_info(f">>> Running tests{' (filtered)' if args.filter else ''}")
     colcon_test_args = []
     if build_folder is not None:
         colcon_test_args.extend(["--build-base", build_folder])
@@ -134,6 +143,7 @@ def main():
         colcon_test_args.extend(["--packages-select"] + packages)
 
     if args.list_tests:
+        # Leading space on -N / --collect-only avoids colcon parsing them as its own args.
         colcon_test_args.extend(["--ctest-args", " -N"])
         colcon_test_args.extend(["--pytest-args", " --collect-only"])
         colcon_test_args.extend(["--event-handlers", "console_direct+"])
@@ -141,8 +151,9 @@ def main():
         colcon_test_args.extend(["--ctest-args", f" -R {args.filter}"])
         colcon_test_args.extend(["--pytest-args", f" -k {args.filter}"])
 
-    print_info(">>> Cleaning old test results")
-    clean_test_results(workspace_root, packages, build_folder)
+    if not args.list_tests:
+        print_info(">>> Cleaning old test results")
+        clean_test_results(workspace_root, packages, build_folder)
 
     colcon_command = (
         f". {install_folder}/setup.sh && colcon test {' '.join(colcon_test_args)}"
