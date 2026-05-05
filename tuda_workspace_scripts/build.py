@@ -144,11 +144,29 @@ def clean_packages(
 
 
 def clean_test_results(workspace_root, packages, build_base="build"):
-    for package in packages:
-        package_build_dir = os.path.join(workspace_root, build_base, package)
+    """Remove stale ``test_results/`` subtrees under each package's build dir.
+
+    If ``packages`` is empty, every package directory under ``build_base`` is
+    cleaned.
+    """
+    build_base_dir = os.path.join(workspace_root, build_base)
+    if any(packages):
+        package_build_dirs = [
+            os.path.join(build_base_dir, package) for package in packages
+        ]
+    elif os.path.isdir(build_base_dir):
+        package_build_dirs = [
+            os.path.join(build_base_dir, entry)
+            for entry in os.listdir(build_base_dir)
+            if os.path.isdir(os.path.join(build_base_dir, entry))
+        ]
+    else:
+        package_build_dirs = []
+
+    for package_build_dir in package_build_dirs:
         if not os.path.isdir(package_build_dir):
             continue
-        for root, dirs, files in os.walk(package_build_dir, topdown=True):
+        for root, dirs, _ in os.walk(package_build_dir, topdown=True):
             if "test_results" in dirs:
                 shutil.rmtree(os.path.join(root, "test_results"))
                 dirs.remove("test_results")
