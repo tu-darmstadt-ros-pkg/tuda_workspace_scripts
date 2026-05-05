@@ -9,6 +9,7 @@ from tuda_workspace_scripts.workspace import *
 import argcomplete
 import argparse
 import os
+import shlex
 import subprocess
 import sys
 
@@ -17,7 +18,7 @@ def main():
     workspace_root = get_workspace_root()
     parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
     packages_arg = parser.add_argument(
-        "packages", nargs="*", help="If specified only these packages are built."
+        "packages", nargs="*", help="If specified only these packages are tested."
     )
     packages_arg.completer = PackageChoicesCompleter(workspace_root)
     parser.add_argument(
@@ -74,6 +75,10 @@ def main():
     if workspace_root is None:
         print_workspace_error()
         exit()
+
+    if args.list_tests and args.filter:
+        print_error("--list-tests and --filter cannot be combined.")
+        sys.exit(1)
 
     packages = args.packages or []
     if args.this:
@@ -148,15 +153,20 @@ def main():
         colcon_test_args.extend(["--pytest-args", " --collect-only"])
         colcon_test_args.extend(["--event-handlers", "console_direct+"])
     elif args.filter:
-        colcon_test_args.extend(["--ctest-args", f" -R {args.filter}"])
-        colcon_test_args.extend(["--pytest-args", f" -k {args.filter}"])
+        # Leading space on -R / -k avoids colcon parsing them as its own args.
+        # The filter value is a separate element so it survives as a single
+        # token when forwarded to ctest/pytest, even if it contains spaces.
+        colcon_test_args.extend(["--ctest-args", " -R", args.filter])
+        colcon_test_args.extend(["--pytest-args", " -k", args.filter])
 
     if not args.list_tests:
         print_info(">>> Cleaning old test results")
         clean_test_results(workspace_root, packages, build_folder)
 
+    quoted_colcon_test_args = " ".join(shlex.quote(arg) for arg in colcon_test_args)
     colcon_command = (
-        f". {install_folder}/setup.sh && colcon test {' '.join(colcon_test_args)}"
+        f". {shlex.quote(os.path.join(install_folder, 'setup.sh'))}"
+        f" && colcon test {quoted_colcon_test_args}"
     )
     print_info(f">>> Command: {colcon_command}")
     command = subprocess.run(
@@ -167,7 +177,6 @@ def main():
     )
     returncode = command.returncode
 
-    build_folder = build_folder or "build"
     if not args.list_tests:
         if len(packages) > 0:
             for package in packages:
