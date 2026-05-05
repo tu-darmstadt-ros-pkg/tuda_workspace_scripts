@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-
+# PYTHON_ARGCOMPLETE_OK
 """
 Remove specified packages and their repositories from the workspace.
 Prompts for confirmation if other packages are present in the same repository.

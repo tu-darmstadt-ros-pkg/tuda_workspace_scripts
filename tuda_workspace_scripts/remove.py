@@ -50,17 +50,18 @@ def remove_packages(
     for item in items:
         pkg_path_str = get_package_path(item, str(workspace_root))
         if pkg_path_str:
-            pkg_path = Path(pkg_path_str)
-            repo_root = get_repo_root(pkg_path, src_root)
-            if repo_root:
-                target_map.setdefault(repo_root, []).append(item)
-            else:
-                target_map.setdefault(pkg_path, []).append(item)
-                non_git_targets.add(pkg_path)
-            continue
+            pkg_path = Path(pkg_path_str).resolve()
+            if pkg_path.is_relative_to(src_root):
+                repo_root = get_repo_root(pkg_path, src_root)
+                if repo_root:
+                    target_map.setdefault(repo_root, []).append(item)
+                else:
+                    target_map.setdefault(pkg_path, []).append(item)
+                    non_git_targets.add(pkg_path)
+                continue
 
-        candidate = src_root / item
-        if not candidate.is_dir():
+        candidate = (src_root / item).resolve()
+        if not candidate.is_relative_to(src_root) or not candidate.is_dir():
             missing_items.append(item)
             continue
         real_repo = get_repo_root(candidate, src_root)

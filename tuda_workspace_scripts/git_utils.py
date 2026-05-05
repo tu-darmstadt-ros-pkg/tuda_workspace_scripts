@@ -362,7 +362,7 @@ def find_merge_evidence(
         target = tracking_ref.name if tracking_ref else mainline
 
         # Strategy 1: Direct Ancestry
-        if repo.is_ancestor(branch.commit, target):
+        if is_ancestor(repo, branch.commit.hexsha, target):
             return True, f"merged into {target}"
 
         # Strategy 2: Squash Merge Search (by branch name)
