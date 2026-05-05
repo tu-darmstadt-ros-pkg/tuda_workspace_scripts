@@ -146,7 +146,7 @@ def process_repo(repo_path: Path) -> RepoResult:
                 if upstream_exists:
                     pull_attempted = True
                     pull = launch_subprocess(
-                        ["git", "pull", "--ff-only"], cwd=repo_path
+                        ["git", "pull", "--ff-only"], cwd=repo_path, timeout=120
                     )
                     pull_ok = pull.returncode == 0
                     pull_out = pull.stdout or ""

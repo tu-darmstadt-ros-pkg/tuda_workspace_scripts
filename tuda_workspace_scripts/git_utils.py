@@ -372,6 +372,7 @@ def find_merge_evidence(
         since_date = branch.commit.committed_datetime.isoformat()
         candidate_shas = repo.git.log(
             target,
+            "--fixed-strings",
             f"--grep={branch.name}",
             f"--since={since_date}",
             "--format=%H",
