@@ -6,7 +6,7 @@ a ROS 2 workspace. It consolidates common git operations used by e.g. the status
 update and remove scripts.
 
 Key Features:
-    - Mainline branch detection with optional auto-configuration
+    - Mainline branch detection
     - Repository status printing (dirty state, unpushed commits, etc.)
     - Branch tracking and merge evidence detection
     - Safe subprocess execution with timeout handling
@@ -19,12 +19,13 @@ Example Usage:
     ...     print_repo_status,
     ... )
     >>> repo = git.Repo("/path/to/repo")
-    >>> mainline = get_mainline_branch(repo, auto_set=True)
+    >>> mainline = get_mainline_branch(repo)
     >>> status = get_repo_status(Path("/path/to/repo"), workspace_root)
     >>> print_repo_status(status)
 """
 
 import os
+import re
 import signal
 import subprocess
 from dataclasses import dataclass, field
@@ -100,6 +101,11 @@ class RepoStatus:
     def is_clean(self) -> bool:
         """Whether the repository is in a clean state (inverse of has_changes)."""
         return not self.has_changes
+
+    @property
+    def has_unmerged_deleted_branches(self) -> bool:
+        """Whether any deleted-upstream branch lacks merge evidence into mainline."""
+        return any("merged" not in hint for _, hint in self.deleted_upstream_branches)
 
 
 # =============================================================================
@@ -222,59 +228,29 @@ def get_repo_root(path: Path, workspace_src: Path) -> Path | None:
 def get_remote_head_mainline(
     repo: git.Repo,
     remote_name: str,
-    auto_set: bool = False,
 ) -> str | None:
     """Resolve the remote's configured mainline branch via refs/remotes/<remote>/HEAD.
-
-    This function checks for a symbolic reference at refs/remotes/<remote>/HEAD
-    which points to the default branch of the remote repository.
 
     Args:
         repo: GitPython Repo instance.
         remote_name: Name of the remote (e.g., 'origin').
-        auto_set: If True and HEAD is not set, attempt to auto-configure it
-            using 'git remote set-head <remote> -a'.
 
     Returns:
         Remote ref like '<remote>/<branch>' (e.g., 'origin/ros2'), or None
-        if not resolvable.
-
-    Example:
-        >>> repo = git.Repo("/path/to/repo")
-        >>> mainline_ref = get_remote_head_mainline(repo, "origin", auto_set=True)
-        >>> print(mainline_ref)  # 'origin/main'
+        if refs/remotes/<remote>/HEAD is not configured.
     """
     head_ref = f"refs/remotes/{remote_name}/HEAD"
     prefix = f"refs/remotes/{remote_name}/"
-
-    def try_resolve() -> str | None:
-        try:
-            sym = repo.git.symbolic_ref("-q", head_ref).strip()
-            if sym and sym.startswith(prefix):
-                return f"{remote_name}/{sym[len(prefix):]}"
-        except git.exc.GitCommandError:
-            pass  # HEAD ref not configured; fall through to return None
-        return None
-
-    resolved = try_resolve()
-    if resolved:
-        return resolved
-
-    if auto_set:
-        try:
-            launch_subprocess(
-                ["git", "remote", "set-head", remote_name, "-a"],
-                cwd=repo.working_tree_dir,
-                timeout=10,
-            )
-            return try_resolve()
-        except Exception:
-            pass  # Auto-set failed (network, permissions, etc.); fall through
-
+    try:
+        sym = repo.git.symbolic_ref("-q", head_ref).strip()
+        if sym and sym.startswith(prefix):
+            return f"{remote_name}/{sym[len(prefix):]}"
+    except git.exc.GitCommandError:
+        pass
     return None
 
 
-def get_mainline_branch(repo: git.Repo, auto_set: bool = False) -> str:
+def get_mainline_branch(repo: git.Repo) -> str:
     """Detect the mainline branch name dynamically.
 
     Attempts to determine the mainline branch using multiple strategies:
@@ -282,22 +258,11 @@ def get_mainline_branch(repo: git.Repo, auto_set: bool = False) -> str:
     2. Look for ROS_DISTRO environment variable as branch name
     3. Fall back to common names: 'main', 'master'
 
-    Args:
-        repo: GitPython Repo instance.
-        auto_set: If True and remote HEAD is not set, attempt to
-            auto-configure it.
-
     Returns:
         The mainline branch name (e.g., 'main', 'ros2', 'master').
-
-    Example:
-        >>> repo = git.Repo("/path/to/repo")
-        >>> mainline = get_mainline_branch(repo, auto_set=True)
-        >>> print(f"Mainline is: {mainline}")
     """
-    # Strategy 1: Check remote HEAD
     for remote in repo.remotes:
-        mainline_ref = get_remote_head_mainline(repo, remote.name, auto_set=auto_set)
+        mainline_ref = get_remote_head_mainline(repo, remote.name)
         if mainline_ref:
             return mainline_ref.split("/", 1)[1]
 
@@ -401,18 +366,24 @@ def find_merge_evidence(
             return True, f"merged into {target}"
 
         # Strategy 2: Squash Merge Search (by branch name)
-        # Find commits on target that mention branch name
+        # Use --grep as a coarse prefilter, then verify with a word-boundary
+        # match in Python to avoid false positives when the branch name is a
+        # common substring (e.g. "fix", "test", "ros2").
         since_date = branch.commit.committed_datetime.isoformat()
-        found = repo.git.log(
+        candidate_shas = repo.git.log(
             target,
             f"--grep={branch.name}",
             f"--since={since_date}",
             "--format=%H",
-            "-n",
-            "1",
-        )
-        if found:
-            return True, f"merged into {target} (squashed)"
+        ).splitlines()
+        if candidate_shas:
+            name_pattern = re.compile(rf"\b{re.escape(branch.name)}\b")
+            for sha in candidate_shas:
+                msg = repo.commit(sha).message
+                if isinstance(msg, bytes):
+                    msg = msg.decode("utf-8", "replace")
+                if name_pattern.search(msg):
+                    return True, f"merged into {target} (squashed)"
 
         # Strategy 3: Squash Merge Search (by commit contents)
         # GitHub adds all commit titles to the squash commit message
@@ -616,22 +587,13 @@ def get_repo_status(
             )
             if count > 0:
                 unpushed_branches.append((branch.name, count))
-        except Exception as e:
-            print_error(f"{repo_path} has error on branch {branch.name}: {e}")
+        except git.exc.GitCommandError:
+            pass  # rev-list failed (corrupt refs, etc.); skip count for this branch
 
     # Determine if there's anything to report
     untracked = list(repo.untracked_files)
     untracked_count = len(untracked)
     has_branches = len(repo.branches) > 0
-
-    has_issues = (
-        untracked_count > 0
-        or stash_count > 0
-        or bool(unpushed_branches)
-        or bool(local_only_branches)
-        or any("merged" not in hint for _, hint in deleted_branches)
-        or bool(changes)
-    )
 
     # Build changes_summary
     changes_summary: List[str] = []
@@ -655,12 +617,11 @@ def get_repo_status(
                 f"Unhandled change type '{item.change_type}': {item.a_path}"
             )
 
-    return RepoStatus(
+    status = RepoStatus(
         rel_path=rel_path,
         branch=branch_name,
         mainline=mainline,
         is_git=True,
-        has_changes=has_issues,
         untracked_count=untracked_count,
         untracked_files=untracked,
         stash_count=stash_count,
@@ -670,6 +631,15 @@ def get_repo_status(
         local_only_branches=local_only_branches,
         deleted_upstream_branches=deleted_branches,
     )
+    status.has_changes = (
+        untracked_count > 0
+        or stash_count > 0
+        or bool(unpushed_branches)
+        or bool(local_only_branches)
+        or status.has_unmerged_deleted_branches
+        or bool(changes)
+    )
+    return status
 
 
 def print_repo_status(

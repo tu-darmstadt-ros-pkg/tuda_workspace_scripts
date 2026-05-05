@@ -50,7 +50,9 @@ if __name__ == "__main__":
         print_workspace_error()
         exit(1)
 
-    items = args.items or []
+    if args.this and args.items:
+        parser.error("--this cannot be combined with positional items")
+
     if args.this:
         items = find_packages_in_directory(os.getcwd())
         if len(items) == 0:
@@ -61,6 +63,8 @@ if __name__ == "__main__":
                 "No package found in the current directory or containing the current directory!"
             )
             exit(1)
+    else:
+        items = args.items
 
     if len(items) == 0:
         print_error("No packages or repositories specified for removal.")
