@@ -218,7 +218,7 @@ class CombinedPackageReposCompleter:
             os.path.basename(repo_path)
             for repo_path in get_repos_in_workspace(self.workspace_path)
         }
-        return list(set(packages) | repos)
+        return sorted(set(packages) | repos)
 
 
 if __name__ == "__main__":
