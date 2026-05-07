@@ -449,11 +449,12 @@ def get_deleted_branch_status(
     if tracking is None:
         return False, None
 
-    try:
-        if not tracking.remote_name:
-            return False, None
+    remote_name = getattr(tracking, "remote_name", None)
+    if not remote_name:
+        return False, None
 
-        remote = repo.remotes[tracking.remote_name]
+    try:
+        remote = repo.remotes[remote_name]
         remote_ref_names = {r.name for r in remote.refs}
 
         if tracking.name in remote_ref_names:
@@ -462,7 +463,7 @@ def get_deleted_branch_status(
     except (KeyError, IndexError, ValueError, AttributeError, TypeError):
         if not repo.head.is_detached and branch.name == repo.head.ref.name:
             warn = (
-                f"Remote '{tracking.remote_name}' for current branch {branch.name} "
+                f"Remote '{remote_name}' for current branch {branch.name} "
                 "does not exist anymore. Skipping deletion."
             )
             return False, warn
@@ -485,11 +486,11 @@ def get_deleted_branch_status(
         return False, warn
 
     # Check if merged into remote HEAD mainline
-    mainline = get_remote_head_mainline(repo, tracking.remote_name)
+    mainline = get_remote_head_mainline(repo, remote_name)
     if mainline is None:
         warn = (
             f"Branch {branch.name} was deleted on the remote but remote "
-            f"'{tracking.remote_name}' HEAD mainline could not be resolved. "
+            f"'{remote_name}' HEAD mainline could not be resolved. "
             "Skipping deletion."
         )
         return False, warn

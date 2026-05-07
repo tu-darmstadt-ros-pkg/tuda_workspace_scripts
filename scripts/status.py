@@ -30,7 +30,7 @@ def main() -> int:
     # Check workspace root itself if it's a git repo
     if (ws_root / ".git").is_dir():
         print_color(Colors.GREEN, f"Looking for changes in {ws_root}...")
-        print_repo_status(get_repo_status(ws_root, ws_root))
+        print_repo_status(get_repo_status(ws_root, ws_root.parent))
 
     # Scan workspace src directory
     ws_src = ws_root / "src"

@@ -334,7 +334,9 @@ def update(**_) -> bool:
                     )
                     if confirm(msg):
                         co = launch_subprocess(
-                            ["git", "checkout", mainline_local], cwd=res.path
+                            ["git", "checkout", mainline_local],
+                            cwd=res.path,
+                            timeout=120,
                         )
                         if co.returncode != 0:
                             print_error(f"Failed to checkout {mainline_local}:")
@@ -344,7 +346,9 @@ def update(**_) -> bool:
                         else:
                             # After checkout: pull (ff-only) if upstream exists
                             pull2 = launch_subprocess(
-                                ["git", "pull", "--ff-only"], cwd=res.path
+                                ["git", "pull", "--ff-only"],
+                                cwd=res.path,
+                                timeout=120,
                             )
                             if pull2.returncode != 0:
                                 print_error(f"git pull failed on {mainline_local}:")
