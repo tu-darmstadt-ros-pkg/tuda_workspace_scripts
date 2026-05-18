@@ -90,16 +90,36 @@ class ZenohRouter:
     @staticmethod
     def from_string(addr: str):
         """
-        Creates a ZenohRouter objects from the text representation "protocol/address:port"
-        Example: "tcp/192.168.1.100:7447" or "quic/athena-main:7447"
+        Creates a ZenohRouter objects from the text representation.
+        Supports formats:
+        - "protocol/address:port": "tcp/192.168.1.100:7447" or "quic/athena-main:7447"
+        - "address:port": uses default protocol "tcp"
+        - "protocol/address": uses default port 7447
+        - "address": uses default protocol "tcp" and port 7447
         """
-        pattern = r"^(?P<protocol>\w+)\/(?P<address>[\w\.\-]+):(?P<port>\d+)$"
-        match = re.match(pattern, addr)
-        if not match:
+        protocol = "tcp"
+        port = 7447
+        address = None
+
+        # Check if protocol is specified (contains /)
+        if "/" in addr:
+            protocol, rest = addr.split("/", 1)
+            addr = rest
+
+        # Check if port is specified (contains :)
+        if ":" in addr:
+            address, port_str = addr.rsplit(":", 1)
+            try:
+                port = int(port_str)
+            except ValueError:
+                raise ValueError(f"Invalid port number in Zenoh router address: {addr}")
+        else:
+            address = addr
+
+        # Validate address format
+        if not address or not re.match(r"^[\w\.\-]+$", address):
             raise ValueError(f"Invalid Zenoh router address format: {addr}")
-        protocol = match.group("protocol")
-        address = match.group("address")
-        port = int(match.group("port"))
+
         return ZenohRouter(address, port, protocol)
 
 
