@@ -93,11 +93,11 @@ class ZenohRouter:
         Creates a ZenohRouter objects from the text representation.
         Supports formats:
         - "protocol/address:port": "tcp/192.168.1.100:7447" or "quic/athena-main:7447"
-        - "address:port": uses default protocol "tcp"
+        - "address:port": uses default protocol "quic"
         - "protocol/address": uses default port 7447
-        - "address": uses default protocol "tcp" and port 7447
+        - "address": uses default protocol "quic" and port 7447
         """
-        protocol = "tcp"
+        protocol = "quic"
         port = 7447
         address = None
 
@@ -238,7 +238,7 @@ def _load_zenoh_router_from_yaml(config: dict[str, Any]) -> ZenohRouter:
         raise ValueError(f"Address not specified for router {config}")
     address = config["address"]
     port = config.get("port", 7447)
-    protocol = config.get("protocol", "tcp")
+    protocol = config.get("protocol", "quic")
     return ZenohRouter(address, port, protocol)
 
 
