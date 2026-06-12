@@ -661,7 +661,7 @@ def print_repo_status(
         print_error(f"Failed to obtain git info for: {status.rel_path}")
         return
 
-    if status.is_clean and not always_print_header:
+    if status.branch == status.mainline and status.is_clean and not always_print_header:
         return
 
     # Print header with branch info
