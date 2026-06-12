@@ -9,6 +9,7 @@ the same set of packages.
 from tuda_workspace_scripts.workspace import *
 import argparse
 import os
+import shlex
 
 
 if __name__ == "__main__":
@@ -51,7 +52,9 @@ if __name__ == "__main__":
         ament_prefix_path = get_ament_prefix_path_without_workspace(workspace_root)
         cmake_prefix_path = get_cmake_prefix_path_without_workspace(workspace_root)
 
+    # Quote the values: clean.sh evals this output, so a path containing a space
+    # or shell metacharacter would otherwise break the export or run as a command.
     if ament_prefix_path is not None:
-        print(f"export AMENT_PREFIX_PATH={ament_prefix_path};")
+        print(f"export AMENT_PREFIX_PATH={shlex.quote(ament_prefix_path)};")
     if cmake_prefix_path is not None:
-        print(f"export CMAKE_PREFIX_PATH={cmake_prefix_path};")
+        print(f"export CMAKE_PREFIX_PATH={shlex.quote(cmake_prefix_path)};")
