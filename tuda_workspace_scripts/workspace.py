@@ -30,6 +30,20 @@ def get_workspace_root(directory=None) -> str | None:
     return None if parent == directory else get_workspace_root(parent)
 
 
+def is_directory_in_workspace_src(directory, workspace_root) -> bool:
+    """Whether `directory` is the workspace ``src`` directory or below it.
+
+    :param directory: The directory to check (typically the current directory).
+    :param workspace_root: The workspace root operations target.
+    :return: True if `directory` lies within ``<workspace_root>/src``.
+    """
+    if workspace_root is None:
+        return False
+    src = os.path.realpath(os.path.join(workspace_root, "src"))
+    directory = os.path.realpath(directory)
+    return directory == src or directory.startswith(src + os.sep)
+
+
 def find_packages_in_directory(directory) -> list[str]:
     """
     :param directory: The directory to search for packages.

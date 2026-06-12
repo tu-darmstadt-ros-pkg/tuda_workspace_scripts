@@ -32,6 +32,10 @@ if __name__ == "__main__":
         exit(0)
 
     if args.this:
+        if not is_directory_in_workspace_src(os.getcwd(), workspace_root):
+            # Outside this workspace's src; _clean.py reports the error. Bail out
+            # before walking an unrelated (possibly huge) directory tree.
+            exit(0)
         packages = find_packages_in_or_containing_directory(os.getcwd())
         if not packages:
             # No package here; _clean.py reports the error.

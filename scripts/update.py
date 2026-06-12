@@ -21,6 +21,10 @@ def load_method_from_file(file_path: str, method_name: str):
 def main(
     no_sudo: bool = False, default_yes: bool = False, verbose: bool = False
 ) -> int:
+    workspace_root = get_workspace_root()
+    if workspace_root is None:
+        print_workspace_error()
+        return 1
     # Get hooks and sort them by their filename
     hooks = list(sorted(get_hooks_for_command("update"), key=basename))
     args = []
@@ -29,7 +33,6 @@ def main(
     if default_yes:
         args.append("-y")
 
-    workspace_root = get_workspace_root()
     os.chdir(workspace_root)
     success = True
     for script in hooks:

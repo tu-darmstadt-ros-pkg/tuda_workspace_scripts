@@ -3,6 +3,7 @@ from tuda_workspace_scripts.build import clean_logs, clean_packages
 from tuda_workspace_scripts.print import print_error, print_workspace_error
 from tuda_workspace_scripts.workspace import (
     get_workspace_root,
+    is_directory_in_workspace_src,
     PackageChoicesCompleter,
     find_packages_in_or_containing_directory,
 )
@@ -44,6 +45,9 @@ if __name__ == "__main__":
 
     packages = args.packages or []
     if args.this:
+        if not is_directory_in_workspace_src(os.getcwd(), workspace_root):
+            print_error("--this is only valid inside the workspace's src directory.")
+            exit(1)
         packages = find_packages_in_or_containing_directory(os.getcwd())
         if len(packages) == 0:
             print_error("No package found in the current directory!")
