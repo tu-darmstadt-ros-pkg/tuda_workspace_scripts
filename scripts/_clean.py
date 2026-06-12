@@ -4,8 +4,7 @@ from tuda_workspace_scripts.print import print_error, print_workspace_error
 from tuda_workspace_scripts.workspace import (
     get_workspace_root,
     PackageChoicesCompleter,
-    find_package_containing,
-    find_packages_in_directory,
+    find_packages_in_or_containing_directory,
 )
 from helpers.remove_packages_from_env import *
 import argcomplete
@@ -45,16 +44,14 @@ if __name__ == "__main__":
 
     packages = args.packages or []
     if args.this:
-        packages = find_packages_in_directory(os.getcwd())
-        if len(packages) == 0:
-            # No packages in the current folder but maybe the current folder is in a package
-            package = find_package_containing(os.getcwd())
-            packages = [package] if package else []
+        packages = find_packages_in_or_containing_directory(os.getcwd())
         if len(packages) == 0:
             print_error("No package found in the current directory!")
             exit(1)
 
     if args.logs:
-        exit(clean_logs(workspace_root, packages, force=args.force))
+        exit(clean_logs(workspace_root, packages, force=args.force) or 0)
     else:
-        exit(clean_packages(workspace_root, packages, force=args.force))
+        # clean_packages returns True on success / False if declined. exit()
+        # treats truthy ints as failure, so translate to an explicit code.
+        exit(0 if clean_packages(workspace_root, packages, force=args.force) else 1)

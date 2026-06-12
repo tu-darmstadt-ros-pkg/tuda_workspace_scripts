@@ -6,7 +6,9 @@ for arg in "$@"; do
   fi
 done
 
-TMP_REMOVAL_EXPORT=$(cd $TUDA_WSS_BASE_SCRIPTS >/dev/null 2>&1 || return 1; python3 -m helpers.remove_packages_from_env "$@")
+# Computed before cleaning so package resolution (e.g. --this) runs in the
+# user's current directory, not the scripts directory.
+TMP_REMOVAL_EXPORT=$(python3 "$TUDA_WSS_BASE_SCRIPTS/helpers/remove_packages_from_env.py" "$@")
 if $TUDA_WSS_BASE_SCRIPTS/_clean.py "$@"; then
   eval "$TMP_REMOVAL_EXPORT"
 fi

@@ -77,6 +77,22 @@ def find_package_containing(path, identification_extensions=None):
     return None
 
 
+def find_packages_in_or_containing_directory(directory) -> list[str]:
+    """Resolve the package(s) associated with a directory.
+
+    Returns the packages located beneath ``directory``; if there are none,
+    falls back to the single package that ``directory`` itself is part of.
+    Returns an empty list if neither applies.
+
+    :param directory: The directory to resolve packages for.
+    """
+    packages = find_packages_in_directory(directory)
+    if packages:
+        return packages
+    package = find_package_containing(directory)
+    return [package] if package else []
+
+
 def get_packages_in_workspace(workspace_path=None):
     """
     Looks for packages in the src folder of a workspace.
