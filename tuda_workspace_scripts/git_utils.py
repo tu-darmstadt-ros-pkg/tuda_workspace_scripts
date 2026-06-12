@@ -369,13 +369,22 @@ def _patch_ids(diff_text: str, cwd: str | Path) -> set[str]:
     """
     if not diff_text.strip():
         return set()
-    proc = subprocess.run(
-        ["git", "patch-id", "--stable"],
-        input=diff_text,
-        cwd=str(cwd),
-        capture_output=True,
-        text=True,
-    )
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        proc = subprocess.run(
+            ["git", "patch-id", "--stable"],
+            input=diff_text,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return set()
+    if proc.returncode != 0:
+        return set()
     return {line.split()[0] for line in proc.stdout.splitlines() if line.strip()}
 
 
@@ -423,6 +432,33 @@ def is_squash_merged(repo: git.Repo, branch_name: str, target: str) -> bool:
         return False
 
 
+def _resolve_mainline_target(repo: git.Repo, mainline: str) -> str:
+    """Resolve a local mainline name to a comparison ref when possible."""
+    local_mainline = next((h for h in repo.heads if h.name == mainline), None)
+    if local_mainline is not None:
+        tracking_ref = local_mainline.tracking_branch()
+        return tracking_ref.name if tracking_ref else mainline
+
+    remote_names = {remote.name for remote in repo.remotes}
+    if any(mainline.startswith(f"{remote}/") for remote in remote_names):
+        return mainline
+
+    for remote in repo.remotes:
+        remote_head = get_remote_head_mainline(repo, remote.name)
+        if remote_head and remote_head.split("/", 1)[1] == mainline:
+            return remote_head
+
+    for remote in repo.remotes:
+        candidate = f"{remote.name}/{mainline}"
+        try:
+            if any(ref.name == candidate for ref in remote.refs):
+                return candidate
+        except (TypeError, ValueError, git.exc.GitCommandError):
+            continue
+
+    return mainline
+
+
 def find_merge_evidence(
     repo: git.Repo,
     branch: git.Head,
@@ -457,15 +493,9 @@ def find_merge_evidence(
     """
     try:
         # `mainline` may be a local branch name ("main") or a remote ref
-        # ("origin/main"). Prefer the remote-tracking ref of the matching local
-        # branch (so squash commits made on the remote are visible); otherwise
-        # use `mainline` directly as the comparison target.
-        local_mainline = next((h for h in repo.heads if h.name == mainline), None)
-        if local_mainline is not None:
-            tracking_ref = local_mainline.tracking_branch()
-            target = tracking_ref.name if tracking_ref else mainline
-        else:
-            target = mainline
+        # ("origin/main"). Prefer a remote-tracking ref when one is available so
+        # squash commits made on the remote are visible.
+        target = _resolve_mainline_target(repo, mainline)
 
         # Direct ancestry: a plain (fast-forward or merge-commit) merge.
         if is_ancestor(repo, branch.commit.hexsha, target):
@@ -546,7 +576,9 @@ def get_deleted_branch_status(
         )
         return False, warn
 
-    # Resolve the remote's mainline branch.
+    if not has_commits_not_on_remote(repo, branch.name):
+        return True, None
+
     mainline = get_remote_head_mainline(repo, remote_name)
     if mainline is None:
         warn = (
@@ -565,17 +597,9 @@ def get_deleted_branch_status(
     if merged:
         return True, None
 
-    # Not merged: keep the branch if it still carries work not on any remote.
-    if has_commits_not_on_remote(repo, branch.name):
-        warn = (
-            f"Branch {branch.name} was deleted on the remote but still has "
-            "commits that are not present on any remote."
-        )
-        return False, warn
-
     warn = (
-        f"Branch {branch.name} was deleted on the remote but is not merged into "
-        f"{mainline}. Skipping deletion."
+        f"Branch {branch.name} was deleted on the remote but still has "
+        "commits that are not present on any remote."
     )
     return False, warn
 
