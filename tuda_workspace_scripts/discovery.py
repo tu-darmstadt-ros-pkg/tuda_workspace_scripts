@@ -149,6 +149,7 @@ def create_zenoh_bridge_config(
         file.write(f"{JSON_COMMENT_MARKER}\n")
         json5.dump(config, file, indent=2)
     print_info("Zenoh bridge config updated.")
+    _warn_if_quic_tls_missing(routers, config)
 
 
 def update_zenoh_bridge_config(
@@ -189,6 +190,26 @@ def update_zenoh_bridge_config(
         file.write(f"{JSON_COMMENT_MARKER}\n")
         json5.dump(config, file, indent=2)
     print_info("Zenoh bridge config updated.")
+    _warn_if_quic_tls_missing(routers, config)
+
+
+def _warn_if_quic_tls_missing(routers: list[ZenohRouter], config: dict):
+    if not any(r.protocol == "quic" for r in routers):
+        return
+    ca_cert = (
+        config.get("transport", {})
+        .get("link", {})
+        .get("tls", {})
+        .get("root_ca_certificate")
+    )
+    if ca_cert is None:
+        print_warn(
+            "QUIC endpoint selected but 'transport.link.tls.root_ca_certificate' is not configured in the zenoh bridge config."
+        )
+    elif not os.path.isfile(ca_cert):
+        print_warn(
+            f"QUIC endpoint selected but TLS root CA certificate not found at '{ca_cert}'."
+        )
 
 
 def _create_zenoh_bridge_config_dict(routers: list[ZenohRouter]) -> dict:
