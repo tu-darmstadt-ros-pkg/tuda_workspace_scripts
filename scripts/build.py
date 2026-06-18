@@ -91,6 +91,9 @@ if __name__ == "__main__":
 
     packages = args.packages or []
     if args.this:
+        if not is_directory_in_workspace_src(os.getcwd(), workspace_root):
+            print_error("--this is only valid inside the workspace's src directory.")
+            exit(1)
         packages = find_packages_in_directory(os.getcwd())
         if len(packages) == 0:
             # No packages in the current folder but maybe the current folder is in a package
