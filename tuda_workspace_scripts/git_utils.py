@@ -25,7 +25,6 @@ Example Usage:
 """
 
 import os
-import re
 import signal
 import subprocess
 from dataclasses import dataclass, field
@@ -225,6 +224,38 @@ def get_repo_root(path: Path, workspace_src: Path) -> Path | None:
 # =============================================================================
 
 
+def refresh_remote_head(
+    repo_path: str | Path,
+    remote_name: str,
+    timeout: int = 30,
+) -> bool:
+    """Update the cached <remote>/HEAD to the remote's current default branch.
+
+    ``git fetch`` does not refresh ``refs/remotes/<remote>/HEAD``, so when a
+    repo's default branch changes (e.g. master -> jazzy) the cached pointer goes
+    stale and mainline detection picks the wrong branch. This re-queries the
+    remote and rewrites the local symbolic ref.
+
+    Best-effort: returns False on any failure (offline, no such remote, no HEAD
+    advertised) and leaves the existing ref untouched. Requires network, so call
+    it only from commands that already go online (e.g. update after fetch).
+
+    Args:
+        repo_path: Path to the git repository.
+        remote_name: Name of the remote (e.g. 'origin').
+        timeout: Maximum seconds to wait for the network query.
+
+    Returns:
+        True if the cached <remote>/HEAD was successfully refreshed.
+    """
+    result = launch_subprocess(
+        ["git", "remote", "set-head", remote_name, "--auto"],
+        cwd=repo_path,
+        timeout=timeout,
+    )
+    return result.returncode == 0
+
+
 def get_remote_head_mainline(
     repo: git.Repo,
     remote_name: str,
@@ -329,6 +360,105 @@ def is_ancestor(repo: git.Repo, ancestor: str, descendant: str) -> bool:
         return False
 
 
+def _patch_ids(diff_text: str, cwd: str | Path) -> set[str]:
+    """Return the patch-ids for one or more unified diffs (read-only).
+
+    Feeds the diff text to ``git patch-id --stable``, which emits one
+    '<patch-id> <commit>' line per patch. Purely computational: reads stdin and
+    creates/modifies no git objects, refs, index or working tree.
+    """
+    if not diff_text.strip():
+        return set()
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        proc = subprocess.run(
+            ["git", "patch-id", "--stable"],
+            input=diff_text,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return set()
+    if proc.returncode != 0:
+        return set()
+    return {line.split()[0] for line in proc.stdout.splitlines() if line.strip()}
+
+
+def is_squash_merged(repo: git.Repo, branch_name: str, target: str) -> bool:
+    """Check if a branch's cumulative change already landed on `target`.
+
+    Detects squash merges independently of commit messages by comparing
+    patch-ids: it computes the patch-id of the branch's whole diff (from its
+    merge-base with `target`) and tests whether any commit on `target` since the
+    merge-base introduced the same change. This is the patch-equivalence
+    technique GitHub uses to recognise squash-merged branches.
+
+    Read-only: it only runs ``git merge-base``, ``git diff``, ``git log`` and
+    ``git patch-id``, so an interruption leaves nothing behind.
+
+    Returns False when the branch carries any change not contained in the squash
+    (e.g. commits added after the merge), so it never reports a branch with
+    genuine extra work as merged.
+
+    Args:
+        repo: GitPython Repo instance.
+        branch_name: Local branch to check.
+        target: Ref to check against (e.g. "origin/main").
+
+    Returns:
+        True if the branch's combined change is already present on `target`.
+    """
+    try:
+        merge_base = repo.git.merge_base(target, branch_name).strip()
+        if not merge_base:
+            return False
+        # Patch-id of the branch's cumulative change.
+        branch_diff = repo.git.diff(merge_base, branch_name)
+        branch_pids = _patch_ids(branch_diff, repo.working_dir)
+        if not branch_pids:
+            return False
+        # A squash commit post-dates the branch's last commit; bound the scan to
+        # target commits since then so long-lived branches stay cheap.
+        since = repo.commit(branch_name).committed_datetime.isoformat()
+        target_log = repo.git.log(
+            "-p", "--no-color", f"--since={since}", f"{merge_base}..{target}"
+        )
+        return bool(branch_pids & _patch_ids(target_log, repo.working_dir))
+    except git.exc.GitCommandError:
+        return False
+
+
+def _resolve_mainline_target(repo: git.Repo, mainline: str) -> str:
+    """Resolve a local mainline name to a comparison ref when possible."""
+    local_mainline = next((h for h in repo.heads if h.name == mainline), None)
+    if local_mainline is not None:
+        tracking_ref = local_mainline.tracking_branch()
+        return tracking_ref.name if tracking_ref else mainline
+
+    remote_names = {remote.name for remote in repo.remotes}
+    if any(mainline.startswith(f"{remote}/") for remote in remote_names):
+        return mainline
+
+    for remote in repo.remotes:
+        remote_head = get_remote_head_mainline(repo, remote.name)
+        if remote_head and remote_head.split("/", 1)[1] == mainline:
+            return remote_head
+
+    for remote in repo.remotes:
+        candidate = f"{remote.name}/{mainline}"
+        try:
+            if any(ref.name == candidate for ref in remote.refs):
+                return candidate
+        except (TypeError, ValueError, git.exc.GitCommandError):
+            continue
+
+    return mainline
+
+
 def find_merge_evidence(
     repo: git.Repo,
     branch: git.Head,
@@ -336,15 +466,20 @@ def find_merge_evidence(
 ) -> Tuple[bool, str]:
     """Detect if a branch has been merged into the mainline.
 
-    Checks for merge evidence using multiple strategies:
-    - Direct ancestry: branch is reachable from mainline
-    - Squash merge detection: commit message contains branch name
-    - Squash merge detection: commit messages contain all branch commit titles
+    Uses two content-based, message-independent checks:
+    - Direct ancestry: the branch tip is reachable from the mainline
+    - Patch equivalence: the branch's squashed change is already on the mainline
+      (squash-merge detection, see ``is_squash_merged``)
+
+    Both are robust to edited/reworded squash messages and to platform
+    differences (e.g. GitLab squash messages are the MR title, not a list of
+    commit titles), so no commit-message heuristics are used.
 
     Args:
         repo: GitPython Repo instance.
         branch: Branch to check for merge evidence.
-        mainline: Mainline branch name to check against.
+        mainline: Mainline to check against. Accepts either a local branch name
+            ("main") or a remote ref ("origin/main").
 
     Returns:
         Tuple of (is_merged, hint_message) where:
@@ -357,58 +492,20 @@ def find_merge_evidence(
         ...     print(f"Branch was {hint}")
     """
     try:
-        local_mainline = repo.heads[mainline]
-        tracking_ref = local_mainline.tracking_branch()
-        target = tracking_ref.name if tracking_ref else mainline
+        # `mainline` may be a local branch name ("main") or a remote ref
+        # ("origin/main"). Prefer a remote-tracking ref when one is available so
+        # squash commits made on the remote are visible.
+        target = _resolve_mainline_target(repo, mainline)
 
-        # Strategy 1: Direct Ancestry
+        # Direct ancestry: a plain (fast-forward or merge-commit) merge.
         if is_ancestor(repo, branch.commit.hexsha, target):
             return True, f"merged into {target}"
 
-        # Strategy 2: Squash Merge Search (by branch name)
-        # Use --grep as a coarse prefilter, then verify with a word-boundary
-        # match in Python to avoid false positives when the branch name is a
-        # common substring (e.g. "fix", "test", "ros2").
-        since_date = branch.commit.committed_datetime.isoformat()
-        candidate_shas = repo.git.log(
-            target,
-            "--fixed-strings",
-            f"--grep={branch.name}",
-            f"--since={since_date}",
-            "--format=%H",
-        ).splitlines()
-        if candidate_shas:
-            name_pattern = re.compile(rf"\b{re.escape(branch.name)}\b")
-            for sha in candidate_shas:
-                msg = repo.commit(sha).message
-                if isinstance(msg, bytes):
-                    msg = msg.decode("utf-8", "replace")
-                if name_pattern.search(msg):
-                    return True, f"merged into {target} (squashed)"
-
-        # Strategy 3: Squash Merge Search (by commit contents)
-        # GitHub adds all commit titles to the squash commit message
-        # Find all commits on branch not in target
-        unique_commits = list(repo.iter_commits(f"{target}..{branch.name}"))
-        if unique_commits:
-            # Extract titles, filtering out empty/whitespace-only ones
-            titles = [
-                c.summary.strip()
-                for c in unique_commits
-                if c.summary and c.summary.strip()
-            ]
-
-            if titles:
-                # Search commits in target since branch creation/update
-                for commit in repo.iter_commits(target, since=since_date):
-                    if isinstance(commit.message, bytes):
-                        msg = commit.message.decode("utf-8", "replace")
-                    else:
-                        msg = commit.message
-
-                    # Check if ALL titles are present in this commit's message
-                    if all(title in msg for title in titles):
-                        return True, f"merged into {target} (squashed)"
+        # Patch equivalence: the branch's cumulative change already landed on the
+        # target as a single commit (a squash merge). Reports not-merged when the
+        # branch carries extra work. Read-only (see is_squash_merged).
+        if is_squash_merged(repo, branch.name, target):
+            return True, f"merged into {target} (squashed)"
 
         return False, f"merge into {target} unverified"
     except (KeyError, IndexError, git.exc.GitCommandError, ValueError):
@@ -426,8 +523,10 @@ def get_deleted_branch_status(
     A branch is considered safely deletable if:
     - Its upstream tracking branch no longer exists on the remote
     - It is not the current branch
-    - It has no commits unknown to any remote
-    - It is merged into the remote's HEAD mainline
+    - It is merged into the remote's HEAD mainline, directly or via a squash
+      merge (in which case the work is preserved on the mainline even though the
+      branch's original commits are absent from every remote), or it carries no
+      commits unknown to any remote
 
     Args:
         repo: GitPython Repo instance.
@@ -477,15 +576,9 @@ def get_deleted_branch_status(
         )
         return False, warn
 
-    # Check for unpushed commits
-    if has_commits_not_on_remote(repo, branch.name):
-        warn = (
-            f"Branch {branch.name} was deleted on the remote but still has "
-            "commits that are not present on any remote."
-        )
-        return False, warn
+    if not has_commits_not_on_remote(repo, branch.name):
+        return True, None
 
-    # Check if merged into remote HEAD mainline
     mainline = get_remote_head_mainline(repo, remote_name)
     if mainline is None:
         warn = (
@@ -495,14 +588,20 @@ def get_deleted_branch_status(
         )
         return False, warn
 
-    if not is_ancestor(repo, branch.name, mainline):
-        warn = (
-            f"Branch {branch.name} was deleted on the remote but is not merged into "
-            f"{mainline}. Skipping deletion."
-        )
-        return False, warn
+    # A squash merge rewrites the branch's commits into a single mainline commit,
+    # so the originals are absent from both the remote and the mainline ancestry.
+    # find_merge_evidence (direct ancestry + patch equivalence) recognises these.
+    # When merged, the work is preserved on the mainline, so it is safe to delete
+    # even though the branch has commits not on any remote.
+    merged, _hint = find_merge_evidence(repo, branch, mainline)
+    if merged:
+        return True, None
 
-    return True, None
+    warn = (
+        f"Branch {branch.name} was deleted on the remote but still has "
+        "commits that are not present on any remote."
+    )
+    return False, warn
 
 
 # =============================================================================

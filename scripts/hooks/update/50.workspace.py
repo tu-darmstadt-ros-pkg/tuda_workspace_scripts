@@ -31,6 +31,7 @@ from tuda_workspace_scripts.git_utils import (
     launch_subprocess,
     get_remote_head_mainline,
     get_deleted_branch_status,
+    refresh_remote_head,
 )
 
 try:
@@ -105,6 +106,13 @@ def process_repo(repo_path: Path) -> RepoResult:
         # 2. Instantiate GitPython Repo object NOW, after fetch,
         # so it sees the pruned refs correctly.
         repo = git.Repo(repo_path)
+
+        # Refresh the cached <remote>/HEAD: git fetch leaves it stale when the
+        # remote's default branch changed, which would make mainline detection
+        # (and thus merge/deletion decisions) target the wrong branch.
+        if fetch_ok:
+            for remote in repo.remotes:
+                refresh_remote_head(repo_path, remote.name)
 
         if not repo.head.is_valid():
             return RepoResult(
