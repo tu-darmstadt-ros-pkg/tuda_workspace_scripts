@@ -77,9 +77,18 @@ Examples: hostname 10.0.10.3
         help="Specify one or more custom addresses for discovery.",
     )
 
+    # no-rmw
+    parser.add_argument(
+        "--no-rmw",
+        action="store_true",
+        help="Adds the selected robots without configuring discovery on the ros middleware level.",
+    )
+
     argcomplete.autocomplete(parser)
 
     args = parser.parse_args()
+
+    flags = []
 
     # Check for mutually exclusive usage
     if args.print_config and args.robots:
@@ -110,7 +119,11 @@ Examples: hostname 10.0.10.3
     if "all" in selected_robots and len(selected_robots) > 1:
         parser.error("'all' cannot be combined with other robots.")
 
-    update_discovery_config(selected_robots, custom_addresses)
+    if args.no_rmw:
+        flags.append("--no-rmw")
+        update_discovery_config(["off"], [])
+    else:
+        update_discovery_config(selected_robots, custom_addresses)
 
     # Get hooks and sort them by their filename
     hooks = list(sorted(get_hooks_for_command("discovery"), key=basename))
@@ -123,12 +136,14 @@ Examples: hostname 10.0.10.3
                 )
                 continue
             on_discovery_updated(
-                selected_robots=selected_robots, custom_addresses=custom_addresses
+                selected_robots=selected_robots,
+                custom_addresses=custom_addresses,
+                flags=flags,
             )
         elif hook.endswith(".bash") or hook.endswith(".sh"):
             executable = "bash" if hook.endswith(".bash") else "sh"
             subprocess.run(
-                [executable, hook] + selected_robots + custom_addresses,
+                [executable, hook] + flags + selected_robots + custom_addresses,
                 cwd=get_workspace_root(),
             )
 
