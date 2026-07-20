@@ -91,6 +91,8 @@ def _is_ros_zombie_node(cmdline: list[str]) -> bool:
             return True
         if item.startswith("__node:="):
             score += 1
+        if item.find("--ros-args") != -1:
+            score += 1
     return score >= 2
 
 
