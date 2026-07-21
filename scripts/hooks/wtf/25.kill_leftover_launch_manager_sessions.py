@@ -13,8 +13,9 @@ Known limits, none of which can be resolved from the command line alone:
 - A hostname changed since the manager started makes its session look unclaimed.
 - A manager inside a container that shares the tmux socket but not the PID
   namespace is invisible here, so all of its sessions look unclaimed.
-- A manager started with a non-default --group is not scanned at all. This only
-  leaves its session behind, which the next wtf run does not fix either.
+- A manager started with a --group that does not contain 'launch_manager' is
+  not scanned at all. This only leaves its session behind, which the next wtf
+  run does not fix either.
 """
 import socket
 
@@ -28,7 +29,6 @@ from tuda_workspace_scripts.print import (
     print_warn,
 )
 
-_SESSION_PREFIX = "launch_manager__"
 _MANAGER_PROCESS_NAME = "launch_manager"
 _DEFAULT_GROUP = "launch_manager"
 _ZOMBIE_STATUSES = {psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD}
@@ -131,12 +131,23 @@ def _claimed_session_names() -> set[str] | None:
     return claimed
 
 
+def _is_manager_session_name(name: str) -> bool:
+    """Whether a session name follows the manager's '<group>__<launcher>' scheme.
+
+    The default group is 'launch_manager' and derived managers embed it in
+    their group, e.g. 'athena_postproc_launch_manager', so any group containing
+    'launch_manager' is treated as manager-owned.
+    """
+    group, sep, launcher = name.partition("__")
+    return bool(sep) and bool(launcher) and "launch_manager" in group
+
+
 def _select_leftover_sessions(sessions, claimed: set[str]) -> list:
     """Detached launch manager sessions with no live owner."""
     leftovers = []
     for session in sessions:
         name = session.name or ""
-        if not name.startswith(_SESSION_PREFIX) or name in claimed:
+        if not _is_manager_session_name(name) or name in claimed:
             continue
         # Compared against "0" so an unknown attachment state counts as
         # attached and the session is left alone.

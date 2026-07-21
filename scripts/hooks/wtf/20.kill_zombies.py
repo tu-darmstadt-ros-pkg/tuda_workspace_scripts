@@ -89,17 +89,19 @@ def _collect_parent_processes(
     return parents
 
 
-def _is_ros2_launch(cmdline: list[str]) -> bool:
-    """Check whether a command line is a 'ros2 launch' invocation."""
-    for arg, following in zip(cmdline, cmdline[1:]):
-        if (arg == "ros2" or arg.endswith("/ros2")) and following == "launch":
-            return True
-    return False
+def _ros2_label(cmdline: list[str]) -> str | None:
+    """Return 'ros2 <verb> <arg> <arg>' for a ros2 CLI invocation, else None.
 
-
-def _launch_label(cmdline: list[str]) -> str:
-    """Return 'ros2 launch <package> <launch_file>' for a launch command line."""
-    rest = cmdline[cmdline.index("launch") + 1 :]
+    Covers launch, run and any other subcommand: the verb plus the first two
+    positional arguments, e.g. 'ros2 launch <package> <launch_file>' or
+    'ros2 run <package> <executable>'.
+    """
+    for i, (arg, verb) in enumerate(zip(cmdline, cmdline[1:])):
+        if arg == "ros2" or arg.endswith("/ros2"):
+            rest = cmdline[i + 2 :]
+            break
+    else:
+        return None
     positional = []
     skip_next = False
     for tok in rest:
@@ -112,7 +114,7 @@ def _launch_label(cmdline: list[str]) -> str:
         positional.append(tok)
         if len(positional) == 2:
             break
-    return " ".join(["ros2", "launch", *positional])
+    return " ".join(["ros2", verb, *positional])
 
 
 def _cgroup_of(pid: int) -> str:
@@ -203,19 +205,18 @@ def _get_process_label(p: psutil.Process) -> str:
     """Return a human-readable label for a process."""
     name = p.info.get("name", "")
     cmdline = p.info.get("cmdline") or []
-    try:
-        if _is_ros2_launch(cmdline):
-            return _launch_label(cmdline)
-        if name.startswith("python") and cmdline:
-            name = cmdline[0].split("/")[-1]
-        if name == "gz" and len(cmdline) > 1:
-            # The subcommand carries the meaning, e.g. 'gz sim'. Other gz*
-            # binaries name themselves fully and only gain noise from it.
-            name += " " + cmdline[1]
-        if name.startswith("ros2") and len(cmdline) > 2:
-            name += " " + " ".join(cmdline[1:3])
-    except (psutil.NoSuchProcess, psutil.AccessDenied):
-        pass
+    label = _ros2_label(cmdline)
+    if label:
+        return label
+    if name.startswith("python"):
+        # cmdline[0] is the interpreter, the script is the first non-option arg.
+        script = next((t for t in cmdline[1:] if not t.startswith("-")), None)
+        if script:
+            name = script.split("/")[-1]
+    if name == "gz" and len(cmdline) > 1:
+        # The subcommand carries the meaning, e.g. 'gz sim'. Other gz*
+        # binaries name themselves fully and only gain noise from it.
+        name += " " + cmdline[1]
     return name
 
 
@@ -229,11 +230,20 @@ def _print_node_processes(processes: list[psutil.Process]) -> None:
         print(f"  ... and {remaining} more nodes")
 
 
+def _protected_pids() -> set[int]:
+    """PIDs of this hook and its ancestors (the wtf runner, its shell)."""
+    own = psutil.Process()
+    return {own.pid} | {parent.pid for parent in own.parents()}
+
+
 def fix() -> tuple[int, int]:
     print_header("Checking for zombies")
     gz_processes = []
     node_processes = []
+    protected_pids = _protected_pids()
     for p in psutil.process_iter(["pid", "name", "cmdline", "status", "ppid"]):
+        if p.pid in protected_pids:
+            continue
         try:
             if p.status() in _ZOMBIE_STATUSES:
                 continue
