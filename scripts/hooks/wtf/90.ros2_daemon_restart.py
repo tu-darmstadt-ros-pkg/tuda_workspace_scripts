@@ -3,11 +3,12 @@ import psutil
 
 from tuda_workspace_scripts.print import *
 from ros2cli.node.daemon import is_daemon_running, spawn_daemon, shutdown_daemon
-import os
+import asyncio
+
+daemon_timeout = 5  # seconds
 
 
 def find_ros2_daemon() -> int:
-    print_info("ROS2 daemon not responding to shutdown request. Killing it.")
     for proc in psutil.process_iter(["pid", "name", "cmdline"]):
         try:
             cmdline = proc.info["cmdline"]
@@ -35,37 +36,53 @@ def kill_ros2_daemon() -> bool:
         return True
 
 
+async def restart_ros2_daemon() -> int:
+
+    successful_shutdown = False
+    async with asyncio.timeout(daemon_timeout):
+        successful_shutdown = await graceful_daemon_shutdown()
+
+    if not successful_shutdown:
+        print_info("ROS2 daemon not responding to shutdown request. Killing it.")
+        if not kill_ros2_daemon():
+            print_error("Failed to kill ROS2 daemon")
+            return 0
+
+    print_info("Spawning ROS2 daemon.")
+    if not spawn_daemon(args=[], timeout=daemon_timeout):
+        print_error("Failed to start ROS2 daemon")
+        return 0
+
+    print_info("Successfully spawned ROS2 daemon.")
+    # The ros2 daemon not running could have actually been an issue for commands such as ros2 topic/service/action/...
+    return 1
+
+
+async def graceful_daemon_shutdown() -> bool:
+    if is_daemon_running(args=[]):
+        print_info("ROS2 daemon is running. Attempting graceful shutdown.")
+        if not shutdown_daemon(args=[], timeout=daemon_timeout):
+            print_warn("Graceful shutdown failed")
+            return False
+        else:
+            print_info("ROS2 daemon shut down gracefully.")
+            return True
+
+    print_info("ROS2 daemon is not running.")
+    return True  # Daemon was not running, so consider it a success
+
+
 def fix() -> int:
     print_header("Checking ROS2 daemon")
     while True:
         try:
-            if is_daemon_running(args=[]):
-                print_info("ROS2 daemon is running. Restarting it just to be safe.")
-                if not shutdown_daemon(args=[], timeout=5):
-                    if not kill_ros2_daemon():
-                        print_error("Failed to shutdown ROS2 daemon")
-                        return 0
-                if not spawn_daemon(args=[], timeout=10):
-                    print_error("Failed to restart ROS2 daemon after stopping it")
-                    return 0
-                print_info("ROS2 daemon restarted")
-                return 0
-            print_info("ROS2 daemon is not running. Starting it.")
-            if not spawn_daemon(args=[], timeout=10):
-                print_error("Failed to start ROS2 daemon")
-                return 0
-            # The ros2 daemon not running could have actually been an issue for commands such as ros2 topic/service/action/...
-            return 1
+            return asyncio.run(restart_ros2_daemon())
+
         except KeyboardInterrupt:
             print_warn(
                 "Canceling the restart of the ROS2 daemon might lead to further issues."
             )
-            if confirm(
-                "Stop anyway? If ros2 daemon stopping fails, fallback can be enabled."
-            ):
+            if confirm("Stop anyway?"):
                 raise
-            print_info("Okay. Trying again.")
 
-            if confirm("Use fallback to stop daemon?"):
-                if not kill_ros2_daemon():
-                    print_error("Failed to kill ROS2 daemon")
+            print_info("Okay. Trying again.")
