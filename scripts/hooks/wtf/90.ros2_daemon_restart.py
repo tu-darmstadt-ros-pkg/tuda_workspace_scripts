@@ -37,8 +37,6 @@ def kill_ros2_daemon() -> bool:
 
 
 async def restart_ros2_daemon() -> int:
-
-    successful_shutdown = False
     try:
         async with asyncio.timeout(daemon_timeout):
             successful_shutdown = await graceful_daemon_shutdown()
@@ -62,7 +60,9 @@ async def restart_ros2_daemon() -> int:
 
 
 async def graceful_daemon_shutdown() -> bool:
-    if is_daemon_running(args=[]):
+    print_info("Checking status of ROS2 daemon.")
+    is_running = await asyncio.to_thread(is_daemon_running, args=[])
+    if is_running:
         print_info("ROS2 daemon is running. Attempting graceful shutdown.")
         if not shutdown_daemon(args=[], timeout=daemon_timeout):
             print_warn("Graceful shutdown failed")
