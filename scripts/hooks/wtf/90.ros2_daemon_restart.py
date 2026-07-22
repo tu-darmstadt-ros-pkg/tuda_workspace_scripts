@@ -17,7 +17,7 @@ def find_ros2_daemon() -> int:
             continue
 
 
-def kill_ros2_daemon() -> int:
+def kill_ros2_daemon() -> bool:
     ros2_daemon_pid = find_ros2_daemon()
     if ros2_daemon_pid:
         try:
@@ -26,13 +26,13 @@ def kill_ros2_daemon() -> int:
             # Make sure the process has terminated and xmlrpc server port is released
             proc.wait(timeout=1)
             print_info(f"Killed ROS2 daemon with PID {ros2_daemon_pid}.")
-            return 1
+            return True
         except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
             print_error(f"Failed to kill ROS2 daemon with PID {ros2_daemon_pid}: {e}")
-            return 0
+            return False
     else:
         print_info("No ROS2 daemon process found to kill.")
-        return 1
+        return True
 
 
 def fix() -> int:
