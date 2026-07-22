@@ -41,7 +41,7 @@ def fix() -> int:
         try:
             if is_daemon_running(args=[]):
                 print_info("ROS2 daemon is running. Restarting it just to be safe.")
-                if not shutdown_daemon(args=[], timeout=1):
+                if not shutdown_daemon(args=[], timeout=5):
                     if not kill_ros2_daemon():
                         print_error("Failed to shutdown ROS2 daemon")
                         return 0
@@ -60,6 +60,12 @@ def fix() -> int:
             print_warn(
                 "Canceling the restart of the ROS2 daemon might lead to further issues."
             )
-            if confirm("Stop anyway?"):
+            if confirm(
+                "Stop anyway? If ros2 daemon stopping fails, fallback can be enabled."
+            ):
                 raise
             print_info("Okay. Trying again.")
+
+            if confirm("Use fallback to stop daemon?"):
+                if not kill_ros2_daemon():
+                    print_error("Failed to kill ROS2 daemon")
