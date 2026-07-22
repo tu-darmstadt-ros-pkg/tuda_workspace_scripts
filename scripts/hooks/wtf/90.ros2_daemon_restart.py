@@ -39,8 +39,11 @@ def kill_ros2_daemon() -> bool:
 async def restart_ros2_daemon() -> int:
 
     successful_shutdown = False
-    async with asyncio.timeout(daemon_timeout):
-        successful_shutdown = await graceful_daemon_shutdown()
+    try:
+        async with asyncio.timeout(daemon_timeout):
+            successful_shutdown = await graceful_daemon_shutdown()
+    except TimeoutError:
+        successful_shutdown = False
 
     if not successful_shutdown:
         print_info("ROS2 daemon not responding to shutdown request. Killing it.")
