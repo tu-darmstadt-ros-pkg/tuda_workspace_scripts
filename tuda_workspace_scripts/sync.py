@@ -353,6 +353,51 @@ def _write_sync_info(
         return None
 
 
+# Files and directories that are always excluded from syncing, regardless of local .gitignore
+ALWAYS_EXCLUDE = [
+    # Python
+    "__pycache__/",
+    "*.pyc",
+    "*.pyo",
+    "*.egg-info/",
+    # colcon output, when a repository root is itself a package
+    "/build/",
+    "/install/",
+    "/log/",
+    # CLion / CMake in-tree build directories
+    "cmake-build-*/",
+    # Web tooling
+    "node_modules/",
+    # Editor backups and merge leftovers
+    "*.swp",
+    "*.swo",
+    "*.orig",
+    "*.rej",
+]
+
+
+def _format_rsync_command(cmd: List[str]) -> str:
+    """
+    Render an rsync command for printing, collapsing the filter rules.
+
+    The --include/--exclude/--filter arguments are the same for every package
+    and make up most of the command line, which buries the source and
+    destination paths that actually differ between invocations.
+    """
+    parts: List[str] = []
+    hidden = 0
+    for arg in cmd:
+        if arg.startswith(("--include=", "--exclude=", "--filter=")):
+            if hidden == 0:
+                parts.append(None)  # placeholder, filled in once the count is known
+            hidden += 1
+            continue
+        parts.append(shlex.quote(arg))
+    if hidden:
+        parts[parts.index(None)] = f"[+{hidden} filter rules]"
+    return " ".join(parts)
+
+
 def _build_rsync_command(
     source_path: str,
     dest_path: str,
@@ -369,17 +414,22 @@ def _build_rsync_command(
     Both None means local-to-local. When is_directory is False, trailing slashes
     and --delete are omitted (single file sync).
     """
-    # Order matters: rsync processes rules first-match-wins,
-    # so --include=.gitignore must come before --exclude=.*
+    # --checksum compares file contents instead of rsync's default size+mtime "quick check".
     cmd = [
         "rsync",
         "-avz",
+        "--checksum",
     ]
 
     if is_directory:
-        cmd.extend(
-            ["--delete", "--include=.gitignore", "--include=.sync_info", "--exclude=.*"]
-        )
+        # Order matters: rsync processes rules first-match-wins
+        cmd.extend(["--delete", "--omit-dir-times", "--include=.gitignore"])
+
+        if not dry_run:
+            cmd.append("--include=.sync_info")
+
+        cmd.append("--exclude=.*")
+        cmd.extend(f"--exclude={pattern}" for pattern in ALWAYS_EXCLUDE)
 
         if use_gitignore_filter:
             cmd.append("--filter=:- .gitignore")
@@ -660,7 +710,7 @@ def sync(
                 is_directory=is_directory,
             )
 
-            print_info(f"Running: {' '.join(rsync_cmd)}")
+            print_info(f"Running: {_format_rsync_command(rsync_cmd)}")
             subprocess.run(rsync_cmd, check=True, stderr=subprocess.PIPE, text=True)
             if dry_run:
                 print_info(f"[DRY RUN] Would sync '{package}'.")
