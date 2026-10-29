@@ -16,7 +16,6 @@ from tuda_workspace_scripts.workspace import (
 from tuda_workspace_scripts.print import print_error, print_workspace_error
 from tuda_workspace_scripts.sync import sync
 
-
 if __name__ == "__main__":
     workspace_root = get_workspace_root()
     parser = argparse.ArgumentParser(

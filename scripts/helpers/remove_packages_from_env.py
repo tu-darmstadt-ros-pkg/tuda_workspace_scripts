@@ -6,11 +6,11 @@ affected packages from the current shell's AMENT_PREFIX_PATH / CMAKE_PREFIX_PATH
 The accepted arguments mirror `_clean.py` so the same command line resolves to
 the same set of packages.
 """
+
 from tuda_workspace_scripts.workspace import *
 import argparse
 import os
 import shlex
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
