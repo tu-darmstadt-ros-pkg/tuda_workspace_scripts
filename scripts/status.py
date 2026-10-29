@@ -6,6 +6,7 @@ Display the status of all git repositories in the workspace.
 Uses the git_utils module to collect and display repository status
 including uncommitted changes, unpushed commits, and branch information.
 """
+
 from pathlib import Path
 
 from tuda_workspace_scripts.git_utils import get_repo_status, print_repo_status

@@ -12,7 +12,6 @@ from tuda_workspace_scripts.config import (
 from tuda_workspace_scripts.print import TableOutput, print_workspace_error
 from tuda_workspace_scripts.workspace import get_workspace_root
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     sub_parsers = parser.add_subparsers(dest="command", help="The command to execute.")

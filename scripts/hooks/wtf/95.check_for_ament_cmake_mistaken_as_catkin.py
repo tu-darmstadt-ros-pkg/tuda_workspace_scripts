@@ -46,11 +46,9 @@ def fix() -> tuple[int, int]:
         print_info(
             "To fix this, add an export tag to the package.xml of the package(s)."
         )
-        print(
-            """  <export>
+        print("""  <export>
     <build_type>ament_cmake</build_type>
-  </export>"""
-        )
+  </export>""")
     return count_warnings, 0
 
 

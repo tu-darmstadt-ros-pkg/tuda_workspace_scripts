@@ -5,6 +5,7 @@ Remove specified packages and their repositories from the workspace.
 Prompts for confirmation if other packages are present in the same repository.
 Before removal, checks if the repository is dirty (uncommitted changes, unpushed commits, stash entries).
 """
+
 from tuda_workspace_scripts.remove import remove_packages
 from tuda_workspace_scripts.print import print_error, print_workspace_error
 from tuda_workspace_scripts.workspace import (
@@ -16,7 +17,6 @@ from tuda_workspace_scripts.workspace import (
 from tuda_workspace_scripts.completion import SmartCompletionFinder
 import argparse
 import os
-
 
 if __name__ == "__main__":
     workspace_root = get_workspace_root()

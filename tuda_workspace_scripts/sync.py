@@ -142,8 +142,7 @@ def _batch_query_remote(
     script_parts = []
     for package in packages:
         safe_pkg = shlex.quote(package)
-        script_parts.append(
-            f"""
+        script_parts.append(f"""
 PKG_PATH=$(python3 "$TUDA_WSS_BASE_SCRIPTS/helpers/get_package_path.py" {safe_pkg} 2>/dev/null)
 echo "PKG_PATH:$PKG_PATH"
 if [ -n "$PKG_PATH" ] && [ -d "$PKG_PATH" ]; then
@@ -162,8 +161,7 @@ else
     echo "STATUS_END"
 fi
 echo "{DELIM}"
-"""
-        )
+""")
 
     combined_script = "\n".join(script_parts)
     remote_script = f"bash -i -c {shlex.quote(combined_script)}"

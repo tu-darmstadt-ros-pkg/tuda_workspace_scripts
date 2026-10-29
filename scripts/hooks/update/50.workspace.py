@@ -8,6 +8,7 @@ Update every git repository under the *src* directory of a ROS 2 workspace.
   unknown to any remote - offers to delete them
 * performs the heavy work in parallel, prints results sequentially
 """
+
 from __future__ import annotations
 
 import os

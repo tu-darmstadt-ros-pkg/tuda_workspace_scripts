@@ -7,7 +7,6 @@ from tuda_workspace_scripts.workspace import PackageChoicesCompleter, get_worksp
 from os import getenv
 import os.path
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Builds the given packages for the given platform/architecture in a docker image."

@@ -9,7 +9,6 @@ from .print import print_info, print_warn
 from .robots import Robot, ZenohRouter, load_robots
 from .workspace import get_workspace_root
 
-
 ws_root = get_workspace_root()
 if not ws_root:
     raise RuntimeError("Workspace root not found")

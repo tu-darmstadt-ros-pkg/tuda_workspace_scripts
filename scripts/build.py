@@ -8,7 +8,6 @@ import argcomplete
 import argparse
 import os
 
-
 if __name__ == "__main__":
     workspace_root = get_workspace_root()
     parser = argparse.ArgumentParser()
